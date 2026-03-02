@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: UCP Shopping Assistant Chatbot
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.11
+
+Parameters:
+  OpenAIApiKey:
+    Type: String
+    Description: OpenAI API Key
+    NoEcho: true
+
+Resources:
+  # DynamoDB Table for conversation sessions
+  ConversationSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ConversationSessions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: session_id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # Lambda Function
+  ChatbotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: shopping-assistant-chatbot
+      Handler: src.chatbot.main.lambda_handler
+      CodeUri: .
+      Runtime: python3.11
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+          UCP_BASE_URL: https://n5je6mqzsskozc32cqdfetl42q0augte.lambda-url.us-east-1.on.aws/
+          UCP_AGENT_PROFILE: https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws/agent-profile
+          CHATBOT_MODEL: gpt-3.5-turbo
+          DYNAMODB_TABLE: !Ref ConversationSessionsTable
+          LOG_LEVEL: INFO
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationSessionsTable
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  ChatbotFunctionUrl:
+    Description: Function URL for Chatbot API
+    Value: !GetAtt ChatbotFunctionUrl.FunctionUrl
+
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref ConversationSessionsTable

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="chat-header">
+            <h1>Shopping Assistant</h1>
+            <p>Your AI-powered shopping companion</p>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message assistant-message">
+                <div class="message-content">
+                    Hello! I'm your shopping assistant. I can help you find products, add them to your cart, and complete your order. What are you looking for today?
+                </div>
+            </div>
+        </div>
+
+        <div class="cart-summary" id="cartSummary" style="display: none;">
+            <h3>Your Cart</h3>
+            <div id="cartItems"></div>
+            <div id="cartTotal"></div>
+        </div>
+
+        <div class="input-container">
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="Type your message..."
+                autocomplete="off"
+            >
+            <button id="sendButton">Send</button>
+        </div>
+    </div>
+
+    <script src="chat.js"></script>
+</body>
+</html>
