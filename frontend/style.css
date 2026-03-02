@@ -30,7 +30,16 @@ body {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     padding: 20px;
-    text-align: center;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-title {
+    text-align: left;
 }
 
 .chat-header h1 {
@@ -41,6 +50,110 @@ body {
 .chat-header p {
     font-size: 14px;
     opacity: 0.9;
+}
+
+.auth-section {
+    display: flex;
+    align-items: center;
+}
+
+.auth-loading {
+    color: white;
+    font-size: 14px;
+}
+
+.auth-button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.login-button {
+    background: white;
+    color: #667eea;
+}
+
+.login-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+}
+
+.logout-button {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 1px solid white;
+}
+
+.logout-button:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid white;
+}
+
+.user-email {
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.login-prompt {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    padding: 40px;
+    text-align: center;
+}
+
+.login-prompt-content h2 {
+    color: #333;
+    margin-bottom: 16px;
+}
+
+.login-prompt-content p {
+    color: #666;
+    margin-bottom: 24px;
+    font-size: 16px;
+}
+
+.merchant-auth-prompt {
+    background: #fff3cd;
+    border: 2px solid #ffc107;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 20px;
+    text-align: center;
+}
+
+.merchant-auth-content p {
+    color: #856404;
+    margin-bottom: 12px;
+    font-size: 14px;
+}
+
+.merchant-auth-content .auth-button {
+    background: #ffc107;
+    color: #333;
+}
+
+.merchant-auth-content .auth-button:hover {
+    background: #ffb300;
 }
 
 .chat-container {

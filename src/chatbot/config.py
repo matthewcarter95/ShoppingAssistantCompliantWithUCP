@@ -32,6 +32,21 @@ class Settings(BaseSettings):
     # AWS Region
     aws_region: str = "us-east-1"
 
+    # Shopping Assistant Auth0 Configuration (User Authentication)
+    shopping_assistant_auth0_domain: str = "grocery-b2c.cic-demo-platform.auth0app.com"
+    shopping_assistant_auth0_algorithms: list[str] = ["RS256"]
+    # No audience needed for shopping assistant
+
+    # Merchant OAuth Configuration (Authorization Code + PKCE)
+    merchant_auth0_domain: str = "agentic-commerce-merchant.cic-demo-platform.auth0app.com"
+    merchant_auth0_client_id: str = "U5xtIqc7cu707C28nQHeCKplg9ec2VPe"
+    merchant_auth0_audience: str = "api://ucp.session.service"
+    merchant_auth0_scope: str = "openid profile email ucp:scopes:checkout_session"
+    merchant_auth0_redirect_uri: str = "https://main.d7stwkdmkar4g.amplifyapp.com/auth/callback"
+
+    # Frontend URL for CORS
+    frontend_url: str = "https://main.d7stwkdmkar4g.amplifyapp.com"
+
 
 # Singleton settings instance
 settings = Settings()

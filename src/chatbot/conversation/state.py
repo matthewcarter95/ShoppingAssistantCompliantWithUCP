@@ -20,6 +20,7 @@ class ConversationState(BaseModel):
     checkout_id: Optional[str] = None
     line_items: List[Dict[str, Any]] = Field(default_factory=list)
     buyer_info: Optional[Dict[str, Any]] = None
+    merchant_auth: Optional[Dict[str, Any]] = None  # Merchant OAuth tokens
     messages: List[Message] = Field(default_factory=list)
     status: str = "init"  # init -> shopping -> ready_to_pay -> completed
     created_at: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
@@ -40,6 +41,7 @@ class ConversationState(BaseModel):
             "checkout_id": self.checkout_id,
             "line_items": self.line_items,
             "buyer_info": self.buyer_info,
+            "merchant_auth": self.merchant_auth,
             "messages": [m.model_dump() for m in self.messages],
             "status": self.status,
             "created_at": self.created_at,
@@ -57,6 +59,7 @@ class ConversationState(BaseModel):
             checkout_id=item.get("checkout_id"),
             line_items=item.get("line_items", []),
             buyer_info=item.get("buyer_info"),
+            merchant_auth=item.get("merchant_auth"),
             messages=messages,
             status=item.get("status", "init"),
             created_at=item.get("created_at", int(datetime.now().timestamp())),

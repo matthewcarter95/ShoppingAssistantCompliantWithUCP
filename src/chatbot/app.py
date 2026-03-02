@@ -3,7 +3,7 @@ import json
 import uuid
 import os
 from typing import Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
@@ -14,6 +14,8 @@ from .models import (
     NewSessionRequest,
     NewSessionResponse,
 )
+from .auth.dependencies import get_current_user
+from .webhooks import auth_router
 from .ucp.client import UCPClient
 from .nlu.openai_client import NLUClient
 from .services.catalog_service import CatalogService
@@ -34,12 +36,17 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+allowed_origins = [
+    "http://localhost:8000",
+    settings.frontend_url,
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Initialize clients and services
@@ -59,6 +66,9 @@ else:
 catalog_service = CatalogService(ucp_client)
 checkout_service = CheckoutService(ucp_client)
 payment_service = PaymentService(ucp_client)
+
+# Include webhook routers
+app.include_router(auth_router)
 
 
 @app.get("/health")
@@ -95,19 +105,32 @@ async def get_discovery():
 
 
 @app.post("/session/new", response_model=NewSessionResponse)
-async def create_new_session(request: NewSessionRequest):
+async def create_new_session(
+    request: NewSessionRequest,
+    user: Dict = Depends(get_current_user)
+):
     """Create a new conversation session."""
+    # Use email from JWT as user_id
+    user_id = user["email"]
     session_id = str(uuid.uuid4())
-    conversation_manager.create_session(request.user_id, session_id)
-    return NewSessionResponse(session_id=session_id, user_id=request.user_id)
+    conversation_manager.create_session(user_id, session_id)
+    return NewSessionResponse(session_id=session_id, user_id=user_id)
 
 
 @app.get("/session/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: str, user_id: str = "default_user"):
+async def get_session(
+    session_id: str,
+    user: Dict = Depends(get_current_user)
+):
     """Retrieve session information."""
+    user_id = user["email"]
     state = conversation_manager.get_session(user_id, session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify session belongs to user
+    if state.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to user")
 
     return SessionResponse(
         user_id=state.user_id,
@@ -121,7 +144,10 @@ async def get_session(session_id: str, user_id: str = "default_user"):
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    user: Dict = Depends(get_current_user)
+):
     """
     Main chat endpoint.
 
@@ -129,10 +155,17 @@ async def chat(request: ChatRequest):
     and returns assistant response with results.
     """
     try:
+        # Use email from JWT as user_id
+        user_id = user["email"]
+
         # Get or create session
         state = conversation_manager.get_or_create_session(
-            request.user_id, request.session_id
+            user_id, request.session_id
         )
+
+        # Verify session belongs to user
+        if state.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Session does not belong to user")
 
         # Add user message to history
         state.add_message("user", request.message)

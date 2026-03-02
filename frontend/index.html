@@ -5,18 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shopping Assistant</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Auth0 SPA SDK -->
+    <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="chat-header">
-            <h1>Shopping Assistant</h1>
-            <p>Your AI-powered shopping companion</p>
+            <div class="header-content">
+                <div class="header-title">
+                    <h1>Shopping Assistant</h1>
+                    <p>Your AI-powered shopping companion</p>
+                </div>
+                <div class="auth-section">
+                    <div id="authLoading" class="auth-loading" style="display: none;">
+                        <span>Loading...</span>
+                    </div>
+                    <div id="authButtons" style="display: none;">
+                        <div id="userProfile" class="user-profile" style="display: none;">
+                            <img id="userAvatar" src="" alt="User" class="user-avatar">
+                            <span id="userEmail" class="user-email"></span>
+                            <button id="logoutButton" class="auth-button logout-button">Logout</button>
+                        </div>
+                        <button id="loginButton" class="auth-button login-button" style="display: none;">Login</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="chat-container" id="chatContainer">
-            <div class="message assistant-message">
-                <div class="message-content">
-                    Hello! I'm your shopping assistant. I can help you find products, add them to your cart, and complete your order. What are you looking for today?
+            <div id="loginPrompt" class="login-prompt" style="display: none;">
+                <div class="login-prompt-content">
+                    <h2>Welcome to Shopping Assistant!</h2>
+                    <p>Please log in to start shopping</p>
+                    <button id="loginPromptButton" class="auth-button login-button">Login to Continue</button>
+                </div>
+            </div>
+            <div id="chatMessages" style="display: none;">
+                <div class="message assistant-message">
+                    <div class="message-content">
+                        Hello! I'm your shopping assistant. I can help you find products, add them to your cart, and complete your order. What are you looking for today?
+                    </div>
                 </div>
             </div>
         </div>
@@ -27,7 +55,7 @@
             <div id="cartTotal"></div>
         </div>
 
-        <div class="input-container">
+        <div class="input-container" id="inputContainer" style="display: none;">
             <input
                 type="text"
                 id="messageInput"
@@ -35,6 +63,13 @@
                 autocomplete="off"
             >
             <button id="sendButton">Send</button>
+        </div>
+
+        <div id="merchantAuthPrompt" class="merchant-auth-prompt" style="display: none;">
+            <div class="merchant-auth-content">
+                <p>Connect your merchant account to complete checkout</p>
+                <button id="connectMerchantButton" class="auth-button">Connect Merchant Account</button>
+            </div>
         </div>
     </div>
 

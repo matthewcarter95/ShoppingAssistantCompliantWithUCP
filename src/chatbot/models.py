@@ -8,7 +8,7 @@ class ChatRequest(BaseModel):
 
     session_id: str = Field(..., description="Session identifier")
     message: str = Field(..., description="User message")
-    user_id: str = Field(default="default_user", description="User identifier")
+    user_id: Optional[str] = Field(None, description="User identifier (extracted from JWT if not provided)")
 
 
 class ChatResponse(BaseModel):
@@ -41,7 +41,7 @@ class SessionResponse(BaseModel):
 class NewSessionRequest(BaseModel):
     """Request model for creating a new session."""
 
-    user_id: str = Field(default="default_user", description="User identifier")
+    user_id: Optional[str] = Field(None, description="User identifier (extracted from JWT if not provided)")
 
 
 class NewSessionResponse(BaseModel):
@@ -49,3 +49,10 @@ class NewSessionResponse(BaseModel):
 
     session_id: str
     user_id: str
+
+
+class ErrorResponse(BaseModel):
+    """Response model for authentication errors."""
+
+    detail: str
+    error_code: Optional[str] = None
