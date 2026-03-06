@@ -45,6 +45,29 @@ async function initAuth0() {
     try {
         authLoading.style.display = 'block';
 
+        // Check for merchant OAuth callback BEFORE initializing Auth0 client
+        const query = window.location.search;
+        if (query.includes('code=') && query.includes('state=')) {
+            const params = new URLSearchParams(query);
+            const state = params.get('state');
+
+            // Detect merchant callback by checking state format: {uuid}_{token}_{intent}
+            // Merchant state has exactly 3 parts separated by underscores
+            // and the last part is "create", "check", or "get"
+            if (state && state.includes('_')) {
+                const stateParts = state.split('_');
+                if (stateParts.length === 3 && ['create', 'check', 'get'].includes(stateParts[2])) {
+                    console.log('Detected merchant OAuth callback, handling separately');
+                    const code = params.get('code');
+                    await handleMerchantAuthCallback(code, state);
+
+                    // After handling merchant callback, reload session without callback params
+                    // Don't continue with Auth0 initialization on this load
+                    return;
+                }
+            }
+        }
+
         auth0Client = await window.auth0.createAuth0Client({
             domain: AUTH0_DOMAIN,
             clientId: AUTH0_CLIENT_ID,
@@ -53,8 +76,7 @@ async function initAuth0() {
             }
         });
 
-        // Check if returning from Auth0 login redirect
-        const query = window.location.search;
+        // Check if returning from shopping assistant Auth0 login redirect
         if (query.includes('code=') && query.includes('state=')) {
             await handleAuthCallback();
         }
@@ -330,17 +352,41 @@ async function handleMerchantAuthCallback(code, state) {
             localStorage.setItem('sessionId', sessionId);
         }
 
-        // Make sure we have a valid access token
-        if (!accessToken && auth0Client) {
-            try {
-                accessToken = await auth0Client.getTokenSilently();
-            } catch (e) {
-                console.error('Failed to get access token:', e);
-                // Continue without token - backend will handle it
-            }
+        // Initialize Auth0 client if not already done (needed to get access token)
+        if (!auth0Client) {
+            auth0Client = await window.auth0.createAuth0Client({
+                domain: AUTH0_DOMAIN,
+                clientId: AUTH0_CLIENT_ID,
+                authorizationParams: {
+                    redirect_uri: window.location.origin
+                }
+            });
         }
 
-        // Exchange code for token
+        // Get current user and access token from shopping assistant Auth0
+        try {
+            const isAuthenticated = await auth0Client.isAuthenticated();
+            if (isAuthenticated) {
+                currentUser = await auth0Client.getUser();
+                accessToken = await auth0Client.getTokenSilently();
+
+                // Update UI to show user is logged in
+                userEmail.textContent = currentUser.email;
+                userAvatar.src = currentUser.picture || 'https://via.placeholder.com/32';
+                userProfile.style.display = 'flex';
+                loginButton.style.display = 'none';
+                authLoading.style.display = 'none';
+                authButtons.style.display = 'block';
+            } else {
+                console.warn('User not authenticated with shopping assistant');
+                authLoading.style.display = 'none';
+                authButtons.style.display = 'block';
+            }
+        } catch (e) {
+            console.error('Failed to check shopping assistant auth:', e);
+        }
+
+        // Exchange merchant authorization code for token
         const response = await fetch(`${API_BASE_URL}/webhooks/auth/callback`, {
             method: 'POST',
             headers: {
@@ -362,6 +408,8 @@ async function handleMerchantAuthCallback(code, state) {
         window.history.replaceState({}, document.title, window.location.pathname);
 
         // Show success message
+        chatMessages.style.display = 'block';
+        inputContainer.style.display = 'flex';
         addMessage('assistant', 'Merchant account connected successfully! You can now add items to your cart. Try saying "add roses to cart" again.');
 
         // Hide merchant auth prompt
@@ -378,6 +426,8 @@ async function handleMerchantAuthCallback(code, state) {
         // Clean up URL even on error
         window.history.replaceState({}, document.title, window.location.pathname);
 
+        chatMessages.style.display = 'block';
+        inputContainer.style.display = 'flex';
         addMessage('assistant', 'Failed to connect merchant account. Please try again.');
     }
 }

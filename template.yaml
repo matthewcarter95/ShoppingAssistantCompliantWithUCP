@@ -63,7 +63,7 @@ Resources:
           MERCHANT_AUTH0_CLIENT_ID: U5xtIqc7cu707C28nQHeCKplg9ec2VPe
           MERCHANT_AUTH0_AUDIENCE: api://ucp.session.service
           MERCHANT_AUTH0_SCOPE: "openid profile email ucp:scopes:checkout_session"
-          MERCHANT_AUTH0_REDIRECT_URI: https://main.d7stwkdmkar4g.amplifyapp.com/auth/callback
+          MERCHANT_AUTH0_REDIRECT_URI: https://main.d7stwkdmkar4g.amplifyapp.com/
           # Frontend URL for CORS
           FRONTEND_URL: !Ref FrontendUrl
       Policies:
