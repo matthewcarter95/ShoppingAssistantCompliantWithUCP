@@ -152,13 +152,14 @@ class UCPClient:
         return response.json()
 
     async def create_checkout_with_payload(
-        self, payload: Dict[str, Any]
+        self, payload: Dict[str, Any], merchant_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create a new checkout session with full payload control.
 
         Args:
             payload: Complete checkout creation payload
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Checkout session response
@@ -166,13 +167,17 @@ class UCPClient:
         url = f"{self.base_url}/checkout-sessions"
         headers = self._get_headers()
 
+        # Add merchant authorization if provided
+        if merchant_token:
+            headers["Authorization"] = f"Bearer {merchant_token}"
+
         logger.info(f"Creating checkout session with payload")
         response = await self.client.post(url, headers=headers, json=payload)
         response.raise_for_status()
         return response.json()
 
     async def update_checkout(
-        self, checkout_id: str, updates: Dict[str, Any]
+        self, checkout_id: str, updates: Dict[str, Any], merchant_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Update an existing checkout session.
@@ -180,12 +185,17 @@ class UCPClient:
         Args:
             checkout_id: The checkout session ID
             updates: Dictionary of updates to apply
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Updated checkout session response
         """
         url = f"{self.base_url}/checkout-sessions/{checkout_id}"
         headers = self._get_headers()
+
+        # Add merchant authorization if provided
+        if merchant_token:
+            headers["Authorization"] = f"Bearer {merchant_token}"
 
         logger.info(f"Updating checkout session {checkout_id}")
         response = await self.client.put(url, headers=headers, json=updates)
@@ -231,18 +241,23 @@ class UCPClient:
         response.raise_for_status()
         return response.json()
 
-    async def get_checkout(self, checkout_id: str) -> Dict[str, Any]:
+    async def get_checkout(self, checkout_id: str, merchant_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Retrieve a checkout session.
 
         Args:
             checkout_id: The checkout session ID
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Checkout session data
         """
         url = f"{self.base_url}/checkout-sessions/{checkout_id}"
         headers = self._get_headers()
+
+        # Add merchant authorization if provided
+        if merchant_token:
+            headers["Authorization"] = f"Bearer {merchant_token}"
 
         response = await self.client.get(url, headers=headers)
         response.raise_for_status()

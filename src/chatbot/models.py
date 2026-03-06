@@ -24,6 +24,12 @@ class ChatResponse(BaseModel):
     order: Optional[Dict[str, Any]] = Field(
         None, description="Completed order information"
     )
+    merchant_auth_required: bool = Field(
+        False, description="Whether merchant authorization is required"
+    )
+    merchant_auth_url: Optional[str] = Field(
+        None, description="Merchant authorization URL if auth is required"
+    )
 
 
 class SessionResponse(BaseModel):

@@ -1,4 +1,5 @@
 """Conversation session management with DynamoDB."""
+import os
 import boto3
 from typing import Optional
 from datetime import datetime, timedelta
@@ -8,6 +9,34 @@ from ..utils.logger import setup_logger
 from .state import ConversationState
 
 logger = setup_logger(__name__, settings.log_level)
+
+
+# Singleton manager instance
+_manager_instance = None
+
+
+def get_session_manager():
+    """
+    Get the appropriate session manager based on environment.
+
+    Returns:
+        ConversationManager or LocalConversationManager instance
+    """
+    global _manager_instance
+
+    if _manager_instance is None:
+        # Check if running locally (no Lambda environment)
+        is_local = os.environ.get("AWS_EXECUTION_ENV") is None
+
+        if is_local:
+            from .local_manager import LocalConversationManager
+            _manager_instance = LocalConversationManager()
+            logger.info("Initialized LocalConversationManager (in-memory)")
+        else:
+            _manager_instance = ConversationManager()
+            logger.info("Initialized ConversationManager (DynamoDB)")
+
+    return _manager_instance
 
 
 class ConversationManager:

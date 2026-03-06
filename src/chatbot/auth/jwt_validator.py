@@ -29,6 +29,10 @@ class JWTValidator:
         jwks = self._get_jwks()
         unverified_header = jwt.get_unverified_header(token)
 
+        # Check if kid exists in header
+        if "kid" not in unverified_header:
+            raise ValueError("Token header missing 'kid' field")
+
         rsa_key = {}
         for key in jwks["keys"]:
             if key["kid"] == unverified_header["kid"]:
@@ -42,7 +46,7 @@ class JWTValidator:
                 break
 
         if not rsa_key:
-            raise ValueError("Unable to find appropriate signing key")
+            raise ValueError(f"Unable to find signing key for kid: {unverified_header['kid']}")
 
         return json.dumps(rsa_key)
 

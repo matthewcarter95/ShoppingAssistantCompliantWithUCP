@@ -22,7 +22,7 @@ class CheckoutService:
         self.ucp_client = ucp_client
 
     async def start_checkout(
-        self, state: ConversationState, line_items: List[Dict[str, Any]]
+        self, state: ConversationState, line_items: List[Dict[str, Any]], merchant_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create a new checkout session.
@@ -30,6 +30,7 @@ class CheckoutService:
         Args:
             state: Conversation state
             line_items: List of line items in UCP format
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Checkout session response
@@ -46,7 +47,7 @@ class CheckoutService:
         if state.buyer_info:
             payload["buyer"] = state.buyer_info
 
-        response = await self.ucp_client.create_checkout_with_payload(payload)
+        response = await self.ucp_client.create_checkout_with_payload(payload, merchant_token)
         state.checkout_id = response.get("id")
         state.line_items = line_items
         state.status = "shopping"
@@ -60,6 +61,7 @@ class CheckoutService:
         product_id: str,
         quantity: int = 1,
         product_info: Optional[Dict[str, Any]] = None,
+        merchant_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Add an item to the checkout session.
@@ -84,10 +86,10 @@ class CheckoutService:
 
         # If no checkout exists, create one
         if not state.checkout_id:
-            return await self.start_checkout(state, [line_item])
+            return await self.start_checkout(state, [line_item], merchant_token)
 
         # Otherwise, update existing checkout - need full payload
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id)
+        current_checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
         existing_items = current_checkout.get("line_items", [])
         existing_items.append(line_item)
 
@@ -103,7 +105,7 @@ class CheckoutService:
             update_payload["discounts"] = current_checkout["discounts"]
 
         response = await self.ucp_client.update_checkout(
-            state.checkout_id, update_payload
+            state.checkout_id, update_payload, merchant_token
         )
 
         state.line_items = existing_items
@@ -340,12 +342,13 @@ class CheckoutService:
 
         return response
 
-    async def get_checkout_summary(self, state: ConversationState) -> Optional[Dict[str, Any]]:
+    async def get_checkout_summary(self, state: ConversationState, merchant_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Get current checkout summary.
 
         Args:
             state: Conversation state
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Checkout summary with items and totals
@@ -354,7 +357,7 @@ class CheckoutService:
             return None
 
         try:
-            checkout = await self.ucp_client.get_checkout(state.checkout_id)
+            checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
 
             # Parse line items from UCP format
             line_items = []

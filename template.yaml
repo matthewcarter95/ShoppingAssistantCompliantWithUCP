@@ -71,6 +71,16 @@ Resources:
             TableName: !Ref ConversationSessionsTable
       FunctionUrlConfig:
         AuthType: NONE
+        Cors:
+          AllowOrigins:
+            - !Ref FrontendUrl
+            - "http://localhost:8000"
+          AllowMethods:
+            - "*"
+          AllowHeaders:
+            - "*"
+          AllowCredentials: true
+          MaxAge: 300
 
 Outputs:
   ChatbotFunctionUrl:

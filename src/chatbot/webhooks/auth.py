@@ -25,7 +25,7 @@ class OAuthCallbackRequest(BaseModel):
     """Request model for OAuth callback."""
     code: str
     state: str
-    code_verifier: str
+    code_verifier: Optional[str] = None  # Optional, will be retrieved from session if not provided
 
 
 class OAuthCreateRequest(BaseModel):
@@ -57,7 +57,8 @@ async def check_merchant_auth_status(
         MerchantAuthStatus with authorization details
     """
     manager = get_session_manager()
-    session_state = await manager.load_session(session_id)
+    user_id = user["email"]
+    session_state = manager.get_session(user_id, session_id)
 
     if not session_state:
         raise HTTPException(
@@ -66,7 +67,7 @@ async def check_merchant_auth_status(
         )
 
     # Verify session belongs to user
-    if session_state.user_id != user["email"]:
+    if session_state.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to user"
@@ -95,7 +96,7 @@ async def check_merchant_auth_status(
                     "merchant_user": merchant_auth.get("merchant_user"),
                 }
 
-                await manager.save_session(session_state)
+                manager.update_session(session_state)
 
                 return MerchantAuthStatus(
                     authorized=True,
@@ -141,7 +142,8 @@ async def handle_oauth_callback(
 
     # Load session
     manager = get_session_manager()
-    session_state = await manager.load_session(session_id)
+    user_id = user["email"]
+    session_state = manager.get_session(user_id, session_id)
 
     if not session_state:
         raise HTTPException(
@@ -150,17 +152,29 @@ async def handle_oauth_callback(
         )
 
     # Verify session belongs to user
-    if session_state.user_id != user["email"]:
+    if session_state.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to user"
         )
 
+    # Get code_verifier from request or session
+    code_verifier = request.code_verifier
+    if not code_verifier:
+        # Retrieve from session
+        if session_state.merchant_auth and session_state.merchant_auth.get("pending_code_verifier"):
+            code_verifier = session_state.merchant_auth["pending_code_verifier"]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing code_verifier"
+            )
+
     # Exchange authorization code for tokens
     try:
         token_response = await merchant_oauth_client.exchange_code_for_token(
             request.code,
-            request.code_verifier
+            code_verifier
         )
     except Exception as e:
         raise HTTPException(
@@ -179,7 +193,7 @@ async def handle_oauth_callback(
         }
     }
 
-    await manager.save_session(session_state)
+    manager.update_session(session_state)
 
     return {
         "success": True,

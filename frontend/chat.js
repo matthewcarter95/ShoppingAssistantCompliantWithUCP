@@ -68,7 +68,8 @@ async function initAuth0() {
         if (isAuthenticated) {
             await handleAuthenticated();
         } else {
-            showLoginPrompt();
+            // Allow anonymous browsing
+            setupAnonymousMode();
         }
 
     } catch (error) {
@@ -82,17 +83,30 @@ async function initAuth0() {
 async function handleAuthCallback() {
     try {
         const query = window.location.search;
+        const params = new URLSearchParams(query);
+        const code = params.get('code');
+        const state = params.get('state');
 
         // Check if this is a merchant auth callback
-        if (query.includes('state=') && sessionId) {
-            const params = new URLSearchParams(query);
-            const state = params.get('state');
-            const code = params.get('code');
+        // State format: {session_id}_{csrf_token}_{intent}
+        if (code && state && state.includes('_')) {
+            // Try to extract session ID from state parameter
+            const stateParts = state.split('_');
+            if (stateParts.length >= 3) {
+                const stateSessionId = stateParts[0];
+                const intent = stateParts[2];
 
-            if (state && state.startsWith(sessionId)) {
-                // This is a merchant OAuth callback
-                await handleMerchantAuthCallback(code, state);
-                return;
+                // Load session ID from localStorage if not already set
+                if (!sessionId) {
+                    sessionId = localStorage.getItem('sessionId');
+                }
+
+                // This is a merchant OAuth callback if state contains session ID with underscores
+                if (stateSessionId && intent) {
+                    console.log('Detected merchant OAuth callback');
+                    await handleMerchantAuthCallback(code, state);
+                    return;
+                }
             }
         }
 
@@ -119,12 +133,17 @@ async function handleAuthenticated() {
         userAvatar.src = currentUser.picture || 'https://via.placeholder.com/32';
         userProfile.style.display = 'flex';
         loginButton.style.display = 'none';
-        loginPrompt.style.display = 'none';
+        hideLoginPrompt();
         chatMessages.style.display = 'block';
         inputContainer.style.display = 'flex';
 
         // Initialize session
         await initSession();
+
+        // Add welcome back message if this is a new login
+        if (!chatMessages.querySelector('.message')) {
+            addMessage('assistant', `Welcome back, ${currentUser.email}! How can I help you today?`);
+        }
 
         messageInput.focus();
 
@@ -156,40 +175,79 @@ async function logout() {
 
 function showLoginPrompt() {
     loginPrompt.style.display = 'flex';
-    chatMessages.style.display = 'none';
-    inputContainer.style.display = 'none';
+    loginButton.style.display = 'block';
+    // Don't hide chat interface - just show login prompt overlay
+}
+
+function hideLoginPrompt() {
+    loginPrompt.style.display = 'none';
+}
+
+function setupAnonymousMode() {
+    // Show chat interface for anonymous users
+    chatMessages.style.display = 'block';
+    inputContainer.style.display = 'flex';
     loginButton.style.display = 'block';
     userProfile.style.display = 'none';
+    loginPrompt.style.display = 'none';
+
+    // Generate anonymous session ID
+    sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+        sessionId = generateUUID();
+        localStorage.setItem('sessionId', sessionId);
+    }
+
+    // Add welcome message
+    addMessage('assistant', 'Welcome! You can browse products anonymously. Login when you\'re ready to add items to your cart.');
+
+    messageInput.focus();
+}
+
+function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 // ===== Session Management =====
 async function initSession() {
-    sessionId = localStorage.getItem('sessionId');
+    // Keep existing anonymous session if it exists
+    const existingSessionId = localStorage.getItem('sessionId');
 
-    if (!sessionId) {
-        try {
-            const response = await fetch(`${API_BASE_URL}/session/new`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${accessToken}`
-                },
-                body: JSON.stringify({})
-            });
+    if (existingSessionId) {
+        sessionId = existingSessionId;
+        console.log('Using existing session:', sessionId);
+        return;
+    }
 
-            if (!response.ok) {
-                throw new Error(`Failed to create session: ${response.status}`);
-            }
+    // Create authenticated session
+    try {
+        const response = await fetch(`${API_BASE_URL}/session/new`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`
+            },
+            body: JSON.stringify({})
+        });
 
-            const data = await response.json();
-            sessionId = data.session_id;
-            localStorage.setItem('sessionId', sessionId);
-            console.log('Created new session:', sessionId);
-
-        } catch (error) {
-            console.error('Failed to create session:', error);
-            addMessage('assistant', 'Failed to initialize session. Please refresh the page.');
+        if (!response.ok) {
+            throw new Error(`Failed to create session: ${response.status}`);
         }
+
+        const data = await response.json();
+        sessionId = data.session_id;
+        localStorage.setItem('sessionId', sessionId);
+        console.log('Created new authenticated session:', sessionId);
+
+    } catch (error) {
+        console.error('Failed to create session:', error);
+        // Fall back to anonymous session
+        sessionId = generateUUID();
+        localStorage.setItem('sessionId', sessionId);
     }
 }
 
@@ -260,11 +318,26 @@ async function initiateMerchantAuth() {
 
 async function handleMerchantAuthCallback(code, state) {
     try {
-        const codeVerifier = sessionStorage.getItem('merchant_code_verifier');
-        const storedState = sessionStorage.getItem('merchant_state');
+        console.log('Processing merchant auth callback');
 
-        if (!codeVerifier || state !== storedState) {
-            throw new Error('Invalid state parameter');
+        // Extract session ID from state
+        const stateParts = state.split('_');
+        const stateSessionId = stateParts[0];
+
+        // Restore session ID from state if needed
+        if (!sessionId) {
+            sessionId = stateSessionId;
+            localStorage.setItem('sessionId', sessionId);
+        }
+
+        // Make sure we have a valid access token
+        if (!accessToken && auth0Client) {
+            try {
+                accessToken = await auth0Client.getTokenSilently();
+            } catch (e) {
+                console.error('Failed to get access token:', e);
+                // Continue without token - backend will handle it
+            }
         }
 
         // Exchange code for token
@@ -272,30 +345,39 @@ async function handleMerchantAuthCallback(code, state) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken}`
+                ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
             },
             body: JSON.stringify({
                 code: code,
-                state: state,
-                code_verifier: codeVerifier
+                state: state
             })
         });
 
         if (!response.ok) {
-            throw new Error('Failed to complete merchant authorization');
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Failed to complete merchant authorization');
         }
-
-        // Clean up
-        sessionStorage.removeItem('merchant_code_verifier');
-        sessionStorage.removeItem('merchant_state');
 
         // Clean up URL
         window.history.replaceState({}, document.title, window.location.pathname);
 
-        addMessage('assistant', 'Merchant account connected successfully! You can now complete your checkout.');
+        // Show success message
+        addMessage('assistant', 'Merchant account connected successfully! You can now add items to your cart. Try saying "add roses to cart" again.');
+
+        // Hide merchant auth prompt
+        hideMerchantAuthPrompt();
+
+        // Enable input
+        messageInput.disabled = false;
+        sendButton.disabled = false;
+        messageInput.focus();
 
     } catch (error) {
         console.error('Merchant auth callback error:', error);
+
+        // Clean up URL even on error
+        window.history.replaceState({}, document.title, window.location.pathname);
+
         addMessage('assistant', 'Failed to connect merchant account. Please try again.');
     }
 }
@@ -309,13 +391,18 @@ function hideMerchantAuthPrompt() {
 }
 
 // ===== Chat Functions =====
-function addMessage(role, content) {
+function addMessage(role, content, allowHTML = false) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}-message`;
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    contentDiv.textContent = content;
+
+    if (allowHTML) {
+        contentDiv.innerHTML = content;
+    } else {
+        contentDiv.textContent = content;
+    }
 
     messageDiv.appendChild(contentDiv);
     chatMessages.appendChild(messageDiv);
@@ -409,13 +496,20 @@ async function sendMessage() {
     messageInput.value = '';
 
     try {
-        // Send to API with Authorization header
+        // Build headers
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+
+        // Add auth header if user is logged in
+        if (accessToken) {
+            headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+
+        // Send to API
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken}`
-            },
+            headers: headers,
             body: JSON.stringify({
                 session_id: sessionId,
                 message: message
@@ -423,7 +517,7 @@ async function sendMessage() {
         });
 
         if (!response.ok) {
-            if (response.status === 401) {
+            if (response.status === 401 && accessToken) {
                 // Token expired, try to refresh
                 accessToken = await auth0Client.getTokenSilently({ cacheMode: 'off' });
                 throw new Error('Token expired, please retry');
@@ -432,6 +526,21 @@ async function sendMessage() {
         }
 
         const data = await response.json();
+
+        // Check if response indicates login required
+        if (data.text && data.text.includes('ERROR: You must login')) {
+            addMessage('assistant', 'To add items to your cart, please login first.');
+            showLoginPrompt();
+            return;
+        }
+
+        // Check if merchant authorization is required
+        if (data.merchant_auth_required && data.merchant_auth_url) {
+            // Display message with authorization link
+            const messageText = `${data.text} <a href="${data.merchant_auth_url}" class="merchant-auth-link">Click here to authorize</a>`;
+            addMessage('assistant', messageText, true); // true = allow HTML
+            return;
+        }
 
         // Display assistant response
         if (data.text) {
