@@ -42,10 +42,17 @@ class Settings(BaseSettings):
     merchant_auth0_client_id: str = "U5xtIqc7cu707C28nQHeCKplg9ec2VPe"
     merchant_auth0_audience: str = "api://ucp.session.service"
     merchant_auth0_scope: str = "openid profile email ucp:scopes:checkout_session"
-    merchant_auth0_redirect_uri: str = "https://main.d7stwkdmkar4g.amplifyapp.com/auth/callback"
 
-    # Frontend URL for CORS
+    # Chatbot base URL (Lambda Function URL)
+    chatbot_base_url: str = "https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws"
+
+    # Frontend URL for CORS and post-OAuth redirects
     frontend_url: str = "https://main.d7stwkdmkar4g.amplifyapp.com"
+
+    @property
+    def merchant_auth0_redirect_uri(self) -> str:
+        """Merchant OAuth redirect URI - points to our backend callback endpoint."""
+        return f"{self.chatbot_base_url}/webhooks/auth/callback"
 
 
 # Singleton settings instance

@@ -1,6 +1,7 @@
 """Conversation session management with DynamoDB."""
 import os
 import boto3
+from boto3.dynamodb.conditions import Attr
 from typing import Optional
 from datetime import datetime, timedelta
 
@@ -123,3 +124,40 @@ class ConversationManager:
         if state is None:
             state = self.create_session(user_id, session_id)
         return state
+
+    def get_session_by_id(self, session_id: str) -> Optional[ConversationState]:
+        """
+        Retrieve a conversation session by session_id alone.
+
+        This is useful for OAuth callbacks where we have the session_id
+        from the state parameter but don't know the user_id yet.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            Conversation state if found, None otherwise
+
+        Note: This uses a GSI query on SessionIdIndex which is efficient
+        and scalable compared to scanning the entire table.
+        """
+        try:
+            logger.info(f"Querying SessionIdIndex for session_id: {session_id}")
+            response = self.table.query(
+                IndexName="SessionIdIndex",
+                KeyConditionExpression="session_id = :sid",
+                ExpressionAttributeValues={":sid": session_id},
+                Limit=1
+            )
+            logger.info(f"Query response: Count={response.get('Count', 0)}")
+
+            if response.get("Items"):
+                logger.info(f"Found session {session_id} via GSI")
+                return ConversationState.from_dynamodb_item(response["Items"][0])
+
+            logger.warning(f"Session {session_id} not found in GSI query results")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get session by id {session_id}: {e}")
+            logger.exception(e)
+            return None

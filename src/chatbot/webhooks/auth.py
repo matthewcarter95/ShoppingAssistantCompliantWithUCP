@@ -3,12 +3,17 @@
 from typing import Dict, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from ..auth.dependencies import get_current_user
 from ..auth.merchant_oauth import merchant_oauth_client
 from ..conversation.manager import get_session_manager
+from ..utils.logger import setup_logger
+from ..config import settings
+
+logger = setup_logger(__name__, settings.log_level)
 
 
 router = APIRouter(prefix="/webhooks/auth", tags=["webhooks"])
@@ -116,70 +121,86 @@ async def check_merchant_auth_status(
     )
 
 
-@router.post("/callback")
+@router.get("/callback")
 async def handle_oauth_callback(
-    request: OAuthCallbackRequest,
-    user: Dict = Depends(get_current_user)
+    code: str,
+    state: str,
+    request: Request
 ):
     """
-    Handle OAuth callback from merchant authorization.
+    Handle OAuth callback redirect from merchant authorization.
+
+    This endpoint receives the authorization code from merchant Auth0,
+    exchanges it for tokens, stores them in the session, and redirects
+    back to the frontend.
 
     Args:
-        request: OAuth callback request with code and state
-        user: Authenticated user from JWT
+        code: Authorization code from Auth0
+        state: State parameter containing session_id and CSRF token
+        request: FastAPI request object
 
     Returns:
-        Success message
+        RedirectResponse back to frontend with success indicator
+
+    Note: This is a GET endpoint because OAuth callbacks are browser redirects.
+    It doesn't require shopping assistant authentication because:
+    1. The user was authenticated when they initiated the flow
+    2. We stored the PKCE verifier in their session (keyed by session_id from state)
+    3. We can look up the session by session_id alone (extracted from state)
     """
+    logger.info(f"OAuth callback received - state: {state[:50]}...")
+
     try:
-        # Parse state parameter
-        session_id, csrf_token, intent = merchant_oauth_client.parse_state(request.state)
+        # Parse state parameter to get session ID
+        session_id, csrf_token, intent = merchant_oauth_client.parse_state(state)
+        logger.info(f"Parsed state - session_id: {session_id}, intent: {intent}")
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid state parameter: {str(e)}"
+        logger.error(f"Invalid state parameter: {str(e)}")
+        # Redirect to frontend with error
+        return RedirectResponse(
+            url=f"{settings.frontend_url}?error=invalid_state&message={str(e)}",
+            status_code=302
         )
 
-    # Load session
+    # Load session by session_id (without requiring user_id)
     manager = get_session_manager()
-    user_id = user["email"]
-    session_state = manager.get_session(user_id, session_id)
+    logger.info(f"Looking up session by ID: {session_id}")
+    session_state = manager.get_session_by_id(session_id)
 
     if not session_state:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+        logger.error(f"Session not found for session_id: {session_id}")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}?error=session_not_found",
+            status_code=302
         )
 
-    # Verify session belongs to user
-    if session_state.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to user"
-        )
+    logger.info(f"Session found - user_id: {session_state.user_id}")
 
-    # Get code_verifier from request or session
-    code_verifier = request.code_verifier
-    if not code_verifier:
-        # Retrieve from session
-        if session_state.merchant_auth and session_state.merchant_auth.get("pending_code_verifier"):
-            code_verifier = session_state.merchant_auth["pending_code_verifier"]
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing code_verifier"
-            )
+    # Get code_verifier from session
+    logger.info("Retrieving code verifier from session")
+    if session_state.merchant_auth and session_state.merchant_auth.get("pending_code_verifier"):
+        code_verifier = session_state.merchant_auth["pending_code_verifier"]
+        logger.info("Code verifier found in session")
+    else:
+        logger.error("Code verifier not found in session")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}?error=missing_code_verifier",
+            status_code=302
+        )
 
     # Exchange authorization code for tokens
     try:
+        logger.info("Exchanging authorization code for tokens")
         token_response = await merchant_oauth_client.exchange_code_for_token(
-            request.code,
+            code,
             code_verifier
         )
+        logger.info("Successfully exchanged code for tokens")
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to exchange authorization code: {str(e)}"
+        logger.error(f"Failed to exchange authorization code: {str(e)}")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}?error=token_exchange_failed&message={str(e)}",
+            status_code=302
         )
 
     # Store tokens in session
@@ -188,18 +209,26 @@ async def handle_oauth_callback(
         "refresh_token": token_response.get("refresh_token"),
         "expires_at": merchant_oauth_client.calculate_expiration(token_response["expires_in"]),
         "merchant_user": {
-            "email": user["email"],  # Use shopping assistant user email for now
-            "name": user.get("name", user["email"]),
+            "email": session_state.user_id,  # Use user_id from session
+            "name": session_state.user_id,
         }
     }
 
+    # Clear the pending code_verifier now that we've used it
+    if "pending_code_verifier" in session_state.merchant_auth:
+        del session_state.merchant_auth["pending_code_verifier"]
+    if "pending_state" in session_state.merchant_auth:
+        del session_state.merchant_auth["pending_state"]
+
     manager.update_session(session_state)
 
-    return {
-        "success": True,
-        "message": "Merchant authorization successful",
-        "expires_at": session_state.merchant_auth["expires_at"]
-    }
+    logger.info(f"Merchant authorization complete for session {session_id}, redirecting to frontend")
+
+    # Redirect back to frontend with success indicator
+    return RedirectResponse(
+        url=f"{settings.frontend_url}?merchant_auth=success&session_id={session_id}",
+        status_code=302
+    )
 
 
 @router.post("/create", response_model=OAuthCreateResponse)

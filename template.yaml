@@ -36,6 +36,13 @@ Resources:
           KeyType: HASH
         - AttributeName: session_id
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: SessionIdIndex
+          KeySchema:
+            - AttributeName: session_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -63,8 +70,9 @@ Resources:
           MERCHANT_AUTH0_CLIENT_ID: U5xtIqc7cu707C28nQHeCKplg9ec2VPe
           MERCHANT_AUTH0_AUDIENCE: api://ucp.session.service
           MERCHANT_AUTH0_SCOPE: "openid profile email ucp:scopes:checkout_session"
-          MERCHANT_AUTH0_REDIRECT_URI: https://main.d7stwkdmkar4g.amplifyapp.com/
-          # Frontend URL for CORS
+          # Chatbot base URL (Lambda Function URL) - used for OAuth callback
+          CHATBOT_BASE_URL: https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws
+          # Frontend URL for CORS and post-OAuth redirects
           FRONTEND_URL: !Ref FrontendUrl
       Policies:
         - DynamoDBCrudPolicy:

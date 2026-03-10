@@ -1,0 +1,14 @@
+{
+  "name": "shopping-assistant-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for shopping assistant OAuth flow",
+  "scripts": {
+    "test": "node -r dotenv/config node_modules/.bin/playwright test",
+    "test:headed": "node -r dotenv/config node_modules/.bin/playwright test --headed",
+    "test:debug": "node -r dotenv/config node_modules/.bin/playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "dotenv": "^16.0.3"
+  }
+}

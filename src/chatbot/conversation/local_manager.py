@@ -81,3 +81,22 @@ class LocalConversationManager:
         if state is None:
             state = self.create_session(user_id, session_id)
         return state
+
+    def get_session_by_id(self, session_id: str) -> Optional[ConversationState]:
+        """
+        Retrieve a conversation session by session_id alone.
+
+        This is useful for OAuth callbacks where we have the session_id
+        from the state parameter but don't know the user_id yet.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            Conversation state if found, None otherwise
+        """
+        # Iterate through all sessions to find matching session_id
+        for state in self._sessions.values():
+            if state.session_id == session_id:
+                return state
+        return None

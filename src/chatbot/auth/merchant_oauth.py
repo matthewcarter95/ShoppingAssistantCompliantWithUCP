@@ -9,6 +9,10 @@ from urllib.parse import urlencode
 
 import httpx
 from .config import auth0_settings
+from ..config import settings
+from ..utils.logger import setup_logger
+
+logger = setup_logger(__name__, settings.log_level)
 
 
 class MerchantOAuthClient:
@@ -19,7 +23,9 @@ class MerchantOAuthClient:
         self.client_id = auth0_settings.merchant_auth0_client_id
         self.audience = auth0_settings.merchant_auth0_audience
         self.scope = auth0_settings.merchant_auth0_scope
-        self.redirect_uri = auth0_settings.merchant_auth0_redirect_uri
+        # Use redirect_uri from main settings (computed property)
+        self.redirect_uri = settings.merchant_auth0_redirect_uri
+        logger.info(f"MerchantOAuthClient initialized with redirect_uri: {self.redirect_uri}")
 
     def generate_pkce_pair(self) -> Tuple[str, str]:
         """
@@ -107,7 +113,9 @@ class MerchantOAuthClient:
             "intent": intent,
         }
 
-        return f"https://{self.domain}/authorize?{urlencode(params)}"
+        auth_url = f"https://{self.domain}/authorize?{urlencode(params)}"
+        logger.info(f"Built authorization URL with redirect_uri={self.redirect_uri}")
+        return auth_url
 
     async def exchange_code_for_token(
         self,
@@ -143,8 +151,17 @@ class MerchantOAuthClient:
             "code_verifier": code_verifier,
         }
 
+        logger.info(f"Token exchange request: redirect_uri={self.redirect_uri}, client_id={self.client_id}")
+        logger.info(f"Full token payload (code truncated): grant_type={payload['grant_type']}, redirect_uri={payload['redirect_uri']}")
+
         async with httpx.AsyncClient() as client:
-            response = await client.post(token_url, json=payload)
+            # OAuth token endpoint requires application/x-www-form-urlencoded, not JSON
+            response = await client.post(token_url, data=payload)
+
+            if response.status_code != 200:
+                error_body = response.text
+                logger.error(f"Token exchange failed: status={response.status_code}, body={error_body}")
+
             response.raise_for_status()
             return response.json()
 
@@ -170,7 +187,8 @@ class MerchantOAuthClient:
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(token_url, json=payload)
+            # OAuth token endpoint requires application/x-www-form-urlencoded, not JSON
+            response = await client.post(token_url, data=payload)
             response.raise_for_status()
             return response.json()
 
