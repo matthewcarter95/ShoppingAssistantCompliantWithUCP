@@ -367,8 +367,16 @@ async def chat(
                         else:
                             cart = await checkout_service.get_cart(state)
                             if cart:
-                                item_count = len(cart.get("line_items", []))
-                                tool_result = f"Cart has {item_count} items"
+                                # Count total quantity across all line items
+                                line_items = cart.get("line_items", [])
+                                total_quantity = sum(item.get("quantity", 1) for item in line_items)
+                                line_item_count = len(line_items)
+
+                                if line_item_count == 1:
+                                    tool_result = f"Cart has {total_quantity} item(s)"
+                                else:
+                                    tool_result = f"Cart has {total_quantity} item(s) across {line_item_count} products"
+
                                 checkout_summary = cart
                             else:
                                 tool_result = "Cart is empty"
@@ -377,14 +385,42 @@ async def chat(
                         if not user:
                             tool_result = "ERROR: You must login to apply discounts. Please login to continue."
                         else:
-                            code = arguments["code"]
-                            checkout_response = await checkout_service.apply_discount(
-                                state, code
-                            )
-                            checkout_summary = await checkout_service.get_checkout_summary(
-                                state
-                            )
-                            tool_result = f"Applied discount code: {code}"
+                            # Check if user has merchant authorization
+                            merchant_auth = state.merchant_auth
+                            if not merchant_auth or not merchant_auth.get("access_token"):
+                                # Same merchant auth flow as add_to_cart
+                                from .auth.merchant_oauth import merchant_oauth_client
+
+                                code_verifier, code_challenge = merchant_oauth_client.generate_pkce_pair()
+                                intent = "create"
+                                oauth_state = merchant_oauth_client.generate_state(request.session_id, intent)
+
+                                if not state.merchant_auth:
+                                    state.merchant_auth = {}
+                                state.merchant_auth["pending_code_verifier"] = code_verifier
+                                state.merchant_auth["pending_state"] = oauth_state
+                                conversation_manager.update_session(state)
+
+                                merchant_auth_url = merchant_oauth_client.build_authorization_url(
+                                    state=oauth_state,
+                                    code_challenge=code_challenge,
+                                    intent=intent
+                                )
+
+                                tool_result = f"To apply discount codes, please authorize access to the merchant."
+                                merchant_auth_required = True
+                                logger.info(f"User {user_id} needs merchant authorization for discount operations")
+                            else:
+                                # Pass merchant token to apply discount
+                                merchant_token = state.merchant_auth.get("access_token")
+                                code = arguments["code"]
+                                checkout_response = await checkout_service.apply_discount(
+                                    state, code, merchant_token
+                                )
+                                checkout_summary = await checkout_service.get_checkout_summary(
+                                    state, merchant_token
+                                )
+                                tool_result = f"Applied discount code: {code}"
 
                     elif tool_name == "complete_order":
                         if not user:

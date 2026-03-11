@@ -80,8 +80,10 @@ async def check_merchant_auth_status(
 
     # Check merchant auth
     merchant_auth = session_state.merchant_auth
+    logger.info(f"Checking merchant auth for session {session_id}: has_merchant_auth={bool(merchant_auth)}, has_token={bool(merchant_auth and merchant_auth.get('access_token')) if merchant_auth else False}")
 
     if not merchant_auth or not merchant_auth.get("access_token"):
+        logger.warning(f"Merchant auth not found or missing token for session {session_id}")
         return MerchantAuthStatus(authorized=False)
 
     # Check if token is expired
@@ -204,6 +206,7 @@ async def handle_oauth_callback(
         )
 
     # Store tokens in session
+    logger.info(f"Storing merchant auth tokens for session {session_id}")
     session_state.merchant_auth = {
         "access_token": token_response["access_token"],
         "refresh_token": token_response.get("refresh_token"),
@@ -215,14 +218,15 @@ async def handle_oauth_callback(
     }
 
     # Clear the pending code_verifier now that we've used it
+    # Note: The new dict above doesn't have these, but we're being defensive
     if "pending_code_verifier" in session_state.merchant_auth:
         del session_state.merchant_auth["pending_code_verifier"]
     if "pending_state" in session_state.merchant_auth:
         del session_state.merchant_auth["pending_state"]
 
+    logger.info(f"Updating session {session_id} with merchant auth")
     manager.update_session(session_state)
-
-    logger.info(f"Merchant authorization complete for session {session_id}, redirecting to frontend")
+    logger.info(f"Session {session_id} updated successfully with merchant auth")
 
     # Redirect back to frontend with success indicator
     return RedirectResponse(

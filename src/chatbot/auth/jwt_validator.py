@@ -78,6 +78,7 @@ class JWTValidator:
                     "verify_signature": True,
                     "verify_exp": True,
                     "verify_iat": True,
+                    "verify_aud": False,  # Explicitly disable audience validation
                 }
             )
 

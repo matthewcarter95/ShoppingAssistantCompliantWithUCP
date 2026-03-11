@@ -205,7 +205,7 @@ class CheckoutService:
         return await self.get_checkout_summary(state)
 
     async def apply_discount(
-        self, state: ConversationState, code: str
+        self, state: ConversationState, code: str, merchant_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Apply a discount code to the checkout.
@@ -213,6 +213,7 @@ class CheckoutService:
         Args:
             state: Conversation state
             code: Discount code
+            merchant_token: Optional merchant access token for authorization
 
         Returns:
             Updated checkout session response
@@ -221,7 +222,10 @@ class CheckoutService:
             raise ValueError("No active checkout session")
 
         # Get current checkout to preserve state
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id)
+        current_checkout = await self.ucp_client.get_checkout(
+            state.checkout_id,
+            merchant_token=merchant_token
+        )
 
         # Build full update payload
         update_payload = {
@@ -235,7 +239,7 @@ class CheckoutService:
         }
 
         response = await self.ucp_client.update_checkout(
-            state.checkout_id, update_payload
+            state.checkout_id, update_payload, merchant_token=merchant_token
         )
 
         logger.info(f"Applied discount code {code} to checkout {state.checkout_id}")

@@ -104,8 +104,10 @@ class ConversationManager:
             state: Updated conversation state
         """
         state.updated_at = int(datetime.now().timestamp())
-        self.table.put_item(Item=state.to_dynamodb_item())
-        logger.debug(f"Updated session {state.session_id}")
+        item = state.to_dynamodb_item()
+        logger.info(f"Updating session {state.session_id} with merchant_auth={bool(state.merchant_auth)}")
+        self.table.put_item(Item=item)
+        logger.info(f"Successfully updated session {state.session_id} in DynamoDB")
 
     def get_or_create_session(
         self, user_id: str, session_id: str

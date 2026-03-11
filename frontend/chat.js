@@ -47,6 +47,8 @@ async function initAuth0() {
         authLoading.style.display = 'block';
 
         // Check for merchant OAuth success redirect (from backend after processing callback)
+        // IMPORTANT: Clean up URL BEFORE creating Auth0 client to prevent Auth0 from
+        // trying to process merchant callback params as Auth0 OAuth params
         const query = window.location.search;
         const params = new URLSearchParams(query);
 
@@ -60,26 +62,46 @@ async function initAuth0() {
                 localStorage.setItem('sessionId', sessionId);
             }
 
-            // Set flag to show success message
+            // Set flags to show success message and skip status checks
             merchantAuthJustCompleted = true;
 
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
+            // Store timestamp in sessionStorage so it persists across page reloads
+            sessionStorage.setItem('merchantAuthCompletedAt', Date.now().toString());
 
-            // Continue with normal Auth0 initialization
-            // The merchant auth is already stored in the session by the backend
+            // Reset the merchantAuthInitiated flag since OAuth completed
+            merchantAuthInitiated = false;
+
+            // IMPORTANT: Hide the merchant auth banner permanently after OAuth completes
+            // Once the user has authorized once, they don't need to see the banner again
+            // The inline "authorize" buttons in chat messages are sufficient for re-auth if needed
+            if (merchantAuthPrompt) {
+                merchantAuthPrompt.style.display = 'none';
+                console.log('Hiding merchant auth banner permanently after successful OAuth');
+            }
+
+            // Store flag in localStorage so banner never shows again for this user
+            localStorage.setItem('merchantAuthCompleted', 'true');
+
+            // Clean up URL BEFORE creating Auth0 client
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
 
         auth0Client = await window.auth0.createAuth0Client({
             domain: AUTH0_DOMAIN,
             clientId: AUTH0_CLIENT_ID,
             authorizationParams: {
-                redirect_uri: window.location.origin
-            }
+                redirect_uri: window.location.origin,
+                scope: 'openid profile email'
+            },
+            // Use ID token for user info since we don't have a custom API
+            useRefreshTokens: true,
+            cacheLocation: 'localstorage'
         });
 
         // Check if returning from shopping assistant Auth0 login redirect
-        if (query.includes('code=') && query.includes('state=')) {
+        // Re-read query after potential URL cleanup
+        const currentQuery = window.location.search;
+        if (currentQuery.includes('code=') && currentQuery.includes('state=')) {
             await handleAuthCallback();
         }
 
@@ -150,7 +172,19 @@ async function handleAuthCallback() {
 async function handleAuthenticated() {
     try {
         currentUser = await auth0Client.getUser();
-        accessToken = await auth0Client.getTokenSilently();
+
+        // Get ID token (contains email claim) instead of access token
+        // Since we don't have a custom API, use the ID token for authentication
+        try {
+            const claims = await auth0Client.getIdTokenClaims();
+            accessToken = claims.__raw; // This is the ID token JWT
+            console.log('Using ID token for authentication');
+        } catch (tokenError) {
+            console.error('Failed to get ID token:', tokenError);
+            // If token retrieval fails, try to re-authenticate
+            await auth0Client.loginWithRedirect();
+            return;
+        }
 
         // Update UI
         userEmail.textContent = currentUser.email;
@@ -162,12 +196,20 @@ async function handleAuthenticated() {
         inputContainer.style.display = 'flex';
 
         // Initialize session
-        await initSession();
+        try {
+            await initSession();
+        } catch (sessionError) {
+            console.error('Failed to initialize session:', sessionError);
+            // Show error but don't block the UI
+            addMessage('assistant', 'Welcome! There was an issue loading your session, but you can still chat with me.');
+        }
 
         // Show appropriate message
         if (merchantAuthJustCompleted) {
             // Merchant auth just completed
+            console.log('Handling merchant auth completion in handleAuthenticated');
             hideMerchantAuthPrompt();
+            console.log('Merchant auth banner hidden');
             addMessage('assistant', 'Merchant account connected successfully! You can now add items to your cart.');
             merchantAuthJustCompleted = false;
         } else if (!chatMessages.querySelector('.message')) {
@@ -250,6 +292,7 @@ async function initSession() {
     if (existingSessionId) {
         // Verify the session exists in the backend
         try {
+            console.log(`Verifying existing session: ${existingSessionId}`);
             const response = await fetch(`${API_BASE_URL}/session/${existingSessionId}`, {
                 method: 'GET',
                 headers: {
@@ -258,12 +301,15 @@ async function initSession() {
                 }
             });
 
+            console.log(`Session verification response: ${response.status}`);
+
             if (response.ok) {
                 sessionId = existingSessionId;
                 console.log('Using existing session:', sessionId);
                 return;
             } else {
-                console.log('Existing session not found in backend, creating new session');
+                const errorText = await response.text();
+                console.log(`Existing session not valid (${response.status}): ${errorText}`);
                 localStorage.removeItem('sessionId');
             }
         } catch (error) {
@@ -304,7 +350,23 @@ async function initSession() {
 async function checkMerchantAuth() {
     if (!sessionId || merchantAuthInitiated) return true;
 
+    // If merchant auth just completed (within last 10 seconds), trust that it worked
+    // Don't check immediately to avoid race conditions with the ongoing chat request
+    const merchantAuthCompletedAt = sessionStorage.getItem('merchantAuthCompletedAt');
+    if (merchantAuthCompletedAt) {
+        const elapsed = Date.now() - parseInt(merchantAuthCompletedAt);
+        if (elapsed < 10000) {
+            console.log(`Merchant auth just completed ${elapsed}ms ago, skipping status check to avoid race condition`);
+            return true;
+        } else {
+            // Clear the timestamp after 10 seconds
+            console.log(`Merchant auth completed ${elapsed}ms ago, clearing timestamp`);
+            sessionStorage.removeItem('merchantAuthCompletedAt');
+        }
+    }
+
     try {
+        console.log(`Checking merchant auth for session: ${sessionId}`);
         const response = await fetch(
             `${API_BASE_URL}/webhooks/auth/status?session_id=${sessionId}`,
             {
@@ -314,9 +376,15 @@ async function checkMerchantAuth() {
             }
         );
 
-        if (!response.ok) return false;
+        console.log(`Merchant auth check response: ${response.status}`);
+
+        if (!response.ok) {
+            console.log(`Merchant auth check failed: ${response.status} ${response.statusText}`);
+            return false;
+        }
 
         const data = await response.json();
+        console.log(`Merchant auth status: authorized=${data.authorized}`);
         return data.authorized;
 
     } catch (error) {
@@ -326,8 +394,12 @@ async function checkMerchantAuth() {
 }
 
 async function initiateMerchantAuth() {
-    if (merchantAuthInitiated) return;
+    if (merchantAuthInitiated) {
+        console.log('Merchant auth already initiated, skipping');
+        return;
+    }
 
+    console.log(`Initiating merchant auth for session: ${sessionId}`);
     merchantAuthInitiated = true;
 
     try {
@@ -345,11 +417,16 @@ async function initiateMerchantAuth() {
             }
         );
 
+        console.log(`Merchant auth create response: ${response.status}`);
+
         if (!response.ok) {
-            throw new Error('Failed to create merchant authorization');
+            const errorText = await response.text();
+            console.error(`Failed to create merchant authorization: ${response.status} - ${errorText}`);
+            throw new Error(`Failed to create merchant authorization: ${response.status}`);
         }
 
         const data = await response.json();
+        console.log('Merchant auth created successfully, redirecting to authorization URL');
 
         // Store code_verifier in sessionStorage
         sessionStorage.setItem('merchant_code_verifier', data.code_verifier);
@@ -458,10 +535,25 @@ function updateCartSummary(summary) {
 }
 
 async function checkMerchantAuthForCart() {
+    console.log('checkMerchantAuthForCart called');
+
+    // If user has ever completed merchant auth, never show the banner again
+    // The inline "authorize" buttons in chat messages are sufficient
+    const hasCompletedAuthBefore = localStorage.getItem('merchantAuthCompleted') === 'true';
+    if (hasCompletedAuthBefore) {
+        console.log('User has completed merchant auth before, keeping banner hidden');
+        hideMerchantAuthPrompt();
+        return;
+    }
+
     const isAuthorized = await checkMerchantAuth();
+    console.log(`checkMerchantAuthForCart: isAuthorized=${isAuthorized}, merchantAuthInitiated=${merchantAuthInitiated}`);
+
     if (!isAuthorized && !merchantAuthInitiated) {
+        console.log('Showing merchant auth banner (first time user)');
         showMerchantAuthPrompt();
     } else {
+        console.log('Hiding merchant auth banner');
         hideMerchantAuthPrompt();
     }
 }
