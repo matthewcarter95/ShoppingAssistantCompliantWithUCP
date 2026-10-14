@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # UCP Configuration
     ucp_base_url: str = "https://n5je6mqzsskozc32cqdfetl42q0augte.lambda-url.us-east-1.on.aws/"
     ucp_agent_profile: str = "https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws/agent-profile"
+    # Local development only: allow http and loopback merchants during discovery
+    ucp_allow_insecure: bool = False
 
     # OpenAI Configuration
     chatbot_model: str = "gpt-3.5-turbo"

@@ -102,8 +102,12 @@ class CatalogService:
         """
         Normalize UCP API product format to our internal format.
 
-        UCP format: {id, title, description, price: {value, currency}, ...}
-        Our format: {id, name, description, price, currency, ...}
+        UCP 2026-08-25 format: {id, title, description: {plain}, price_range,
+        variants: [{id, price: {amount, currency}, availability: {available}}],
+        media: [{url}], url}. Amounts are in minor units.
+        Our format: {id, name, description, price (major units), price_minor,
+        currency, image_url, link}. `id` is the first purchasable variant's id,
+        because that is the `item.id` checkout expects.
 
         Args:
             ucp_products: Products from UCP API
@@ -113,20 +117,32 @@ class CatalogService:
         """
         normalized = []
         for product in ucp_products:
-            # Skip out of stock items
-            if product.get("availability") == "out_of_stock":
-                continue
+            variants = product.get("variants") or []
+            # Prefer the first variant that is available for purchase
+            variant = next(
+                (v for v in variants if (v.get("availability") or {}).get("available", True)),
+                None,
+            )
+            if variant is None:
+                continue  # every variant unavailable (or no variants)
 
-            normalized_product = {
-                "id": product.get("id"),
-                "name": product.get("title", product.get("id")),
-                "description": product.get("description", ""),
-                "price": product.get("price", {}).get("value", 0),
-                "currency": product.get("price", {}).get("currency", "USD"),
-                "image_url": product.get("image_link", ""),
-                "link": product.get("link", ""),
-            }
-            normalized.append(normalized_product)
+            price = variant.get("price") or {}
+            amount = price.get("amount", 0)
+            description = product.get("description") or {}
+            media = product.get("media") or []
+
+            normalized.append({
+                "id": variant["id"],
+                "name": product.get("title", variant["id"]),
+                "description": description.get("plain", "") if isinstance(description, dict) else str(description),
+                "price_minor": amount,
+                # Display price assumes a 2-decimal currency; exact handling is
+                # a Step 7 (frontend) concern.
+                "price": amount / 100,
+                "currency": price.get("currency", "USD"),
+                "image_url": media[0].get("url", "") if media else "",
+                "link": product.get("url", ""),
+            })
 
         return normalized
 
@@ -171,14 +187,10 @@ class CatalogService:
             Product dictionary if found, None otherwise
         """
         try:
-            # Try to get from UCP API
-            all_products = await self.ucp_client.search_catalog("")
-            if all_products:
-                # Normalize and find by ID
-                normalized = self._normalize_products(all_products)
-                for product in normalized:
-                    if product["id"] == product_id:
-                        return product
+            found = await self.ucp_client.lookup_products([product_id])
+            for product in self._normalize_products(found):
+                if product["id"] == product_id:
+                    return product
         except Exception as e:
             logger.debug(f"Failed to get product from UCP API: {e}")
 

@@ -149,13 +149,17 @@ class ConversationManager:
                 IndexName="SessionIdIndex",
                 KeyConditionExpression="session_id = :sid",
                 ExpressionAttributeValues={":sid": session_id},
-                Limit=1
             )
             logger.info(f"Query response: Count={response.get('Count', 0)}")
 
-            if response.get("Items"):
+            items = response.get("Items", [])
+            if items:
+                # Skip legacy rows written under the old "authenticated_user"
+                # placeholder; prefer the most recently updated real-user row.
+                real = [i for i in items if i.get("user_id") != "authenticated_user"]
+                chosen = max(real or items, key=lambda i: float(i.get("updated_at", 0)))
                 logger.info(f"Found session {session_id} via GSI")
-                return ConversationState.from_dynamodb_item(response["Items"][0])
+                return ConversationState.from_dynamodb_item(chosen)
 
             logger.warning(f"Session {session_id} not found in GSI query results")
             return None

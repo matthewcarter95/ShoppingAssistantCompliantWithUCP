@@ -1,5 +1,5 @@
 """Payment processing service."""
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..ucp.client import UCPClient
 from ..conversation.state import ConversationState
@@ -22,7 +22,7 @@ class PaymentService:
         self.ucp_client = ucp_client
 
     async def complete_checkout(
-        self, state: ConversationState, buyer_info: Dict[str, Any]
+        self, state: ConversationState, buyer_info: Dict[str, Any], merchant_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Complete checkout with mock payment.
@@ -72,7 +72,7 @@ class PaymentService:
 
         logger.info(f"Completing checkout {state.checkout_id} with mock payment")
         response = await self.ucp_client.complete_checkout(
-            state.checkout_id, complete_payload
+            state.checkout_id, complete_payload, merchant_token
         )
 
         state.status = "completed"

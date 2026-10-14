@@ -1,22 +1,34 @@
-"""UCP header generation utilities."""
+"""UCP header generation utilities (UCP 2026-08-25, REST binding)."""
 import uuid
-from typing import Dict
+from typing import Dict, Optional
 
 
-def generate_ucp_headers(agent_profile: str) -> Dict[str, str]:
+def generate_ucp_headers(
+    agent_profile: str,
+    *,
+    idempotent: bool = False,
+    idempotency_key: Optional[str] = None,
+    has_body: bool = False,
+) -> Dict[str, str]:
     """
-    Generate required UCP headers for API requests.
+    Generate UCP headers for a request.
 
     Args:
-        agent_profile: The UCP agent profile URL
+        agent_profile: URL of the agent's /.well-known/ucp profile
+        idempotent: True for state-changing calls (POST/PUT); adds Idempotency-Key
+        idempotency_key: Reuse a key when retrying the same logical operation
+        has_body: True if the request carries a JSON body (adds Content-Type)
 
     Returns:
-        Dictionary of required UCP headers
+        Dictionary of headers. `Request-Id` is always present, `Idempotency-Key`
+        only on state-changing calls, `Content-Type` only with a body.
     """
-    return {
+    headers = {
         "UCP-Agent": f'profile="{agent_profile}"',
-        "request-signature": "chatbot-request",
-        "idempotency-key": str(uuid.uuid4()),
-        "request-id": str(uuid.uuid4()),
-        "Content-Type": "application/json",
+        "Request-Id": str(uuid.uuid4()),
     }
+    if idempotent:
+        headers["Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
+    if has_body:
+        headers["Content-Type"] = "application/json"
+    return headers

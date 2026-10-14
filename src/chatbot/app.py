@@ -3,7 +3,7 @@ import json
 import uuid
 import os
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends
 
 from .config import settings
 from .models import (
@@ -13,7 +13,7 @@ from .models import (
     NewSessionRequest,
     NewSessionResponse,
 )
-from .auth.dependencies import get_current_user
+from .auth.dependencies import get_current_user, get_current_user_optional
 from .webhooks import auth_router
 from .ucp.client import UCPClient
 from .nlu.openai_client import NLUClient
@@ -131,25 +131,7 @@ async def get_session(
     )
 
 
-async def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Optional[Dict]:
-    """
-    Optional authentication dependency.
-    Returns user dict if authenticated, None if anonymous.
-
-    For shopping assistant, we just check if they have a token.
-    We don't validate it - real security happens at the merchant OAuth level.
-    """
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-
-    # User has a token - they're logged into shopping assistant Auth0
-    # Generate a simple user ID based on session
-    logger.info("User is authenticated with shopping assistant")
-    return {
-        "email": "authenticated_user",  # Placeholder - will use session_id for actual user tracking
-        "sub": "authenticated_user",
-        "name": "User"
-    }
+get_optional_current_user = get_current_user_optional
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -327,7 +309,8 @@ async def chat(
                                 checkout_summary = await checkout_service.get_checkout_summary(
                                     state, merchant_token
                                 )
-                                tool_result = f"Added {quantity} x {product_info.get('title', product_id)} to cart"
+                                product_name = (product_info or {}).get('name', product_id)
+                                tool_result = f"Added {quantity} x {product_name} to cart"
 
                     elif tool_name == "update_cart_quantity":
                         if not user:
@@ -336,11 +319,12 @@ async def chat(
                             product_id = arguments["product_id"]
                             quantity = arguments["quantity"]
 
+                            merchant_token = (state.merchant_auth or {}).get("access_token")
                             checkout_response = await checkout_service.update_item_quantity(
-                                state, product_id, quantity
+                                state, product_id, quantity, merchant_token
                             )
                             checkout_summary = await checkout_service.get_checkout_summary(
-                                state
+                                state, merchant_token
                             )
                             if quantity == 0:
                                 tool_result = f"Removed {product_id} from cart"
@@ -353,11 +337,12 @@ async def chat(
                         else:
                             product_id = arguments["product_id"]
 
+                            merchant_token = (state.merchant_auth or {}).get("access_token")
                             checkout_response = await checkout_service.remove_item(
-                                state, product_id
+                                state, product_id, merchant_token
                             )
                             checkout_summary = await checkout_service.get_checkout_summary(
-                                state
+                                state, merchant_token
                             )
                             tool_result = f"Removed {product_id} from cart"
 
@@ -365,7 +350,9 @@ async def chat(
                         if not user:
                             tool_result = "ERROR: You must login to view cart. Please login to continue."
                         else:
-                            cart = await checkout_service.get_cart(state)
+                            cart = await checkout_service.get_cart(
+                                state, (state.merchant_auth or {}).get("access_token")
+                            )
                             if cart:
                                 # Count total quantity across all line items
                                 line_items = cart.get("line_items", [])
@@ -438,11 +425,14 @@ async def chat(
                             shipping_address = payment_service._parse_address(
                                 buyer_info["shipping_address"]
                             )
-                            await checkout_service.setup_fulfillment(state, shipping_address)
+                            merchant_token = (state.merchant_auth or {}).get("access_token")
+                            await checkout_service.setup_fulfillment(
+                                state, shipping_address, merchant_token
+                            )
 
                             # Complete checkout
                             order_response = await payment_service.complete_checkout(
-                                state, buyer_info
+                                state, buyer_info, merchant_token
                             )
                             order = order_response.get("order", {})
                             tool_result = f"Order completed successfully"
@@ -467,7 +457,9 @@ async def chat(
 
         # Get checkout summary if we have an active checkout
         if state.checkout_id and not checkout_summary and not order:
-            checkout_summary = await checkout_service.get_checkout_summary(state)
+            checkout_summary = await checkout_service.get_checkout_summary(
+                state, (state.merchant_auth or {}).get("access_token")
+            )
 
         return ChatResponse(
             text=assistant_message,

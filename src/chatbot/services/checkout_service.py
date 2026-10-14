@@ -117,6 +117,7 @@ class CheckoutService:
         state: ConversationState,
         product_id: str,
         new_quantity: int,
+        merchant_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update the quantity of an existing item in the cart.
@@ -133,7 +134,7 @@ class CheckoutService:
             raise ValueError("No active checkout session")
 
         # Get current checkout
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id)
+        current_checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
         existing_items = current_checkout.get("line_items", [])
 
         # Find and update the item
@@ -164,7 +165,7 @@ class CheckoutService:
             update_payload["discounts"] = current_checkout["discounts"]
 
         response = await self.ucp_client.update_checkout(
-            state.checkout_id, update_payload
+            state.checkout_id, update_payload, merchant_token
         )
 
         state.line_items = updated_items
@@ -175,6 +176,7 @@ class CheckoutService:
         self,
         state: ConversationState,
         product_id: str,
+        merchant_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Remove an item from the cart.
@@ -187,9 +189,11 @@ class CheckoutService:
             Updated checkout session response
         """
         # Use update_item_quantity with quantity=0 to remove
-        return await self.update_item_quantity(state, product_id, 0)
+        return await self.update_item_quantity(state, product_id, 0, merchant_token)
 
-    async def get_cart(self, state: ConversationState) -> Optional[Dict[str, Any]]:
+    async def get_cart(
+        self, state: ConversationState, merchant_token: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Get current cart contents.
 
@@ -202,7 +206,7 @@ class CheckoutService:
         if not state.checkout_id:
             return None
 
-        return await self.get_checkout_summary(state)
+        return await self.get_checkout_summary(state, merchant_token)
 
     async def apply_discount(
         self, state: ConversationState, code: str, merchant_token: Optional[str] = None
@@ -246,7 +250,10 @@ class CheckoutService:
         return response
 
     async def setup_fulfillment(
-        self, state: ConversationState, shipping_address: Dict[str, Any]
+        self,
+        state: ConversationState,
+        shipping_address: Dict[str, Any],
+        merchant_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Setup fulfillment with shipping address and select first available option.
@@ -262,7 +269,7 @@ class CheckoutService:
             raise ValueError("No active checkout session")
 
         # Get current checkout to build complete payload
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id)
+        current_checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
 
         # Step 1: Update with fulfillment.methods to trigger options
         update_payload = {
@@ -295,7 +302,8 @@ class CheckoutService:
 
         response = await self.ucp_client.update_checkout(
             state.checkout_id,
-            update_payload
+            update_payload,
+            merchant_token
         )
 
         logger.info("Triggered fulfillment options")
@@ -316,7 +324,7 @@ class CheckoutService:
                             first_option = options[0]
 
                             # Get updated checkout and add selection
-                            current = await self.ucp_client.get_checkout(state.checkout_id)
+                            current = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
                             current_fulfillment = current.get("fulfillment", {})
                             current_methods = current_fulfillment.get("methods", [])
 
@@ -339,7 +347,8 @@ class CheckoutService:
 
                             selection_response = await self.ucp_client.update_checkout(
                                 state.checkout_id,
-                                selection_payload
+                                selection_payload,
+                                merchant_token
                             )
                             logger.info(f"Selected fulfillment option {first_option['id']}")
                             return selection_response
