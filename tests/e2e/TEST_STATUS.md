@@ -22,7 +22,7 @@ The merchant Auth0 login is failing with:
 Merchant Auth0 error: "Wrong email or password"
 ```
 
-**Tenant**: agentic-commerce-merchant.cic-demo-platform.auth0app.com
+**Tenant**: universal-commerce-merchant.cic-demo-platform.auth0app.com
 **Email**: `play.write@atko.email`
 **Password**: `Abcd!234`
 
@@ -31,7 +31,7 @@ Merchant Auth0 error: "Wrong email or password"
 ### 1. Add IP to Merchant Auth0 Allowlist ⚠️
 
 You've already added your IP to the shopping assistant Auth0. Now add it to:
-- **Merchant Auth0**: agentic-commerce-merchant.cic-demo-platform.auth0app.com
+- **Merchant Auth0**: universal-commerce-merchant.cic-demo-platform.auth0app.com
 - Go to Security → Attack Protection → Bot Detection
 - Add your IP to the allowlist
 

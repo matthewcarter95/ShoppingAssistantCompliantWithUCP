@@ -54,7 +54,7 @@ test('OAuth flow with manual merchant login', async ({ page }) => {
   console.log('✅ Bot response received');
 
   // Find and click authorization link
-  const authLink = page.locator('a[href*="agentic-commerce-merchant"]').or(
+  const authLink = page.locator('a[href*="universal-commerce-merchant"]').or(
     page.locator('button:has-text("Connect")').or(
       page.locator('a:has-text("authorize")')
     )
@@ -62,7 +62,7 @@ test('OAuth flow with manual merchant login', async ({ page }) => {
   await authLink.waitFor({ state: 'visible', timeout: 10000 });
   await authLink.click();
 
-  await page.waitForURL(/agentic-commerce-merchant\.cic-demo-platform\.auth0app\.com/, { timeout: 15000 });
+  await page.waitForURL(/universal-commerce-merchant\.cic-demo-platform\.auth0app\.com/, { timeout: 15000 });
   console.log('✅ Redirected to merchant Auth0');
 
   // PAUSE HERE FOR MANUAL LOGIN

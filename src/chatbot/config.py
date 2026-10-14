@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     # No audience needed for shopping assistant
 
     # Merchant OAuth Configuration (Authorization Code + PKCE)
-    merchant_auth0_domain: str = "agentic-commerce-merchant.cic-demo-platform.auth0app.com"
-    merchant_auth0_client_id: str = "U5xtIqc7cu707C28nQHeCKplg9ec2VPe"
+    merchant_auth0_domain: str = "universal-commerce-merchant.cic-demo-platform.auth0app.com"
+    merchant_auth0_client_id: str = "C70smEFi7G1XQBO9KVeBN5adJWpfQeDo"
     merchant_auth0_audience: str = "api://ucp.session.service"
     merchant_auth0_scope: str = "openid profile email ucp:scopes:checkout_session"
 

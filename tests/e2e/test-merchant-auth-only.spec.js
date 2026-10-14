@@ -13,9 +13,9 @@ test('Test merchant Auth0 login directly', async ({ page }) => {
 
   // Go directly to merchant Auth0 with a test authorization request
   // This simulates what happens when the user clicks "authorize"
-  const merchantAuthUrl = 'https://agentic-commerce-merchant.cic-demo-platform.auth0app.com/authorize';
+  const merchantAuthUrl = 'https://universal-commerce-merchant.cic-demo-platform.auth0app.com/authorize';
   const params = new URLSearchParams({
-    client_id: 'U5xtIqc7cu707C28nQHeCKplg9ec2VPe', // Shopping assistant's client ID
+    client_id: 'C70smEFi7G1XQBO9KVeBN5adJWpfQeDo', // Shopping assistant's client ID
     response_type: 'code',
     redirect_uri: 'https://main.d7stwkdmkar4g.amplifyapp.com/auth/callback',
     scope: 'openid profile email ucp:scopes:checkout_session',

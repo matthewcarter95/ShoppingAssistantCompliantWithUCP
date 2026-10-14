@@ -141,7 +141,7 @@ test.describe('Shopping Assistant OAuth Flow', () => {
     console.log(messagesText);
 
     // Look for authorization link or button - try multiple selectors
-    let authTrigger = page.locator('a[href*="agentic-commerce-merchant.cic-demo-platform.auth0app.com"]');
+    let authTrigger = page.locator('a[href*="universal-commerce-merchant.cic-demo-platform.auth0app.com"]');
     let hasTrigger = await authTrigger.isVisible({ timeout: 2000 }).catch(() => false);
 
     if (!hasTrigger) {
@@ -163,7 +163,7 @@ test.describe('Shopping Assistant OAuth Flow', () => {
 
     console.log('Step 11: Wait for merchant Auth0 page');
     // Wait for redirect to merchant Auth0
-    await page.waitForURL(/agentic-commerce-merchant\.cic-demo-platform\.auth0app\.com/, { timeout: 15000 });
+    await page.waitForURL(/universal-commerce-merchant\.cic-demo-platform\.auth0app\.com/, { timeout: 15000 });
     await page.screenshot({ path: 'test-results/06-merchant-auth0.png', fullPage: true });
 
     console.log('Step 12: Handle merchant login/approval');

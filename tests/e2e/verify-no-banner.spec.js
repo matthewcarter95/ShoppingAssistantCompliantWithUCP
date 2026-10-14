@@ -42,7 +42,7 @@ test('Verify no merchant auth banner appears after OAuth completes', async ({ pa
     const authLink = page.locator('a.merchant-auth-link, a:has-text("authorize")').first();
     await authLink.click();
 
-    await page.waitForURL(/agentic-commerce-merchant\.cic-demo-platform\.auth0app\.com/);
+    await page.waitForURL(/universal-commerce-merchant\.cic-demo-platform\.auth0app\.com/);
 
     // Login to merchant
     const merchantEmailInput = page.locator('input[type="email"], input[name="username"]');
