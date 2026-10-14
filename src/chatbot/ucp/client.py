@@ -52,6 +52,30 @@ class UCPError(Exception):
     def codes(self) -> Set[str]:
         return {str(m.get("code")) for m in self.messages if m.get("code")}
 
+    def user_message(self) -> str:
+        """
+        Text that is safe to show a shopper.
+
+        Merchant messages are shown when the spec says the buyer can act on
+        them (recoverable / requires_buyer_input / requires_buyer_review).
+        Unrecoverable and malformed-request errors are developer-facing
+        ("Field required at fulfillment.methods[0]..."), so the shopper gets
+        a generic line; the detail stays in the logs.
+        """
+        actionable = {"recoverable", "requires_buyer_input", "requires_buyer_review"}
+        shown = [
+            m["content"]
+            for m in self.messages
+            if m.get("severity") in actionable and m.get("content")
+        ]
+        if shown:
+            return " ".join(shown)
+        code = next(iter(sorted(self.codes)), None) or f"HTTP {self.status_code}"
+        return (
+            f"The merchant couldn't process that request ({code}). "
+            "Please try again; if it keeps happening, the merchant's checkout may be down."
+        )
+
 
 class UCPClient:
     """Client for interacting with UCP-compliant merchant APIs."""

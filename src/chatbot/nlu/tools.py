@@ -40,9 +40,15 @@ FUNCTION USAGE RULES:
 
 7. complete_order - Checkout
    - Examples: "complete my order", "checkout", "place order"
+   - NEVER call this until the user has typed their full name, email address and
+     shipping address in this conversation. If any is missing, ask for it first.
+     NEVER invent, guess or reuse placeholder values (such as "John Doe" or
+     "123 Main St"). Ask for the address as "street, city, STATE ZIP".
+   - If a function returns an error, tell the user what it says. Do not retry the
+     same call and do not say the order went through.
 
 IMPORTANT:
-- Product IDs: bouquet_roses, pot_ceramic, bouquet_tulips, plant_succulent
+- Product IDs come from search_products results. Never guess an ID; search first.
 - NEVER add to cart unless user explicitly asks to add/buy/take
 - Use update_cart_quantity for changing quantities, NOT add_to_cart
 
@@ -159,7 +165,7 @@ CHATBOT_TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "complete_order",
-            "description": "Complete the order and process payment",
+            "description": "Complete the order and process payment. Only call after the user has typed their own full name, email and shipping address in this conversation. Never invent or guess these values.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -173,7 +179,7 @@ CHATBOT_TOOLS: List[Dict[str, Any]] = [
                     },
                     "shipping_address": {
                         "type": "string",
-                        "description": "Full shipping address",
+                        "description": "Full shipping address as typed by the user, formatted as: street, city, STATE ZIP",
                     },
                 },
                 "required": ["buyer_name", "buyer_email", "shipping_address"],

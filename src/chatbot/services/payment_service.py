@@ -37,37 +37,28 @@ class PaymentService:
         if not state.checkout_id:
             raise ValueError("No active checkout session")
 
-        # Parse shipping address
+        # Parse shipping address (used as the billing address for the mock card)
         shipping_address = self._parse_address(buyer_info["shipping_address"])
 
-        # Create mock payment instrument for complete endpoint
-        payment_data = {
-            "id": "mock_payment_123",
-            "type": "card",
+        # UCP 2026-08-25: payment.instruments[], each tied to a handler by id.
+        # The mock handler accepts "success_token"; "fail_token" simulates a decline.
+        instrument = {
+            "id": "instr_1",
             "handler_id": "mock_payment_handler",
-            "brand": "visa",
-            "last_digits": "4242",
-            "token": "success_token",
-            "billing_address": {
-                "type": "PostalAddress",
-                "street_address": shipping_address.get("street_address", "123 Main St"),
-                "address_locality": shipping_address.get("address_locality", "Anytown"),
-                "address_region": shipping_address.get("address_region", "CA"),
-                "address_country": shipping_address.get("address_country", "US"),
-                "postal_code": shipping_address.get("postal_code", "12345"),
-            },
+            "type": "card",
+            "credential": {"type": "token", "token": "success_token"},
+            "billing_address": shipping_address,
         }
 
-        # Risk signals (required field)
-        risk_signals = {
-            "ip_address": "127.0.0.1",
-            "user_agent": "shopping-assistant-chatbot/1.0",
-        }
-
-        # Build complete payload
+        # `risk_signals` is not in the 2026-08-25 spec, but the merchant still
+        # rejects complete without it (422 "Field required at risk_signals").
+        # Remove once the merchant drops the requirement.
         complete_payload = {
-            "payment_data": payment_data,
-            "risk_signals": risk_signals,
+            "payment": {"instruments": [instrument]},
+            "risk_signals": {
+                "ip_address": "127.0.0.1",
+                "user_agent": "shopping-assistant-chatbot/1.0",
+            },
         }
 
         logger.info(f"Completing checkout {state.checkout_id} with mock payment")
@@ -75,8 +66,9 @@ class PaymentService:
             state.checkout_id, complete_payload, merchant_token
         )
 
-        state.status = "completed"
-        logger.info(f"Order completed: {response.get('order', {}).get('id')}")
+        # Trust the merchant's status; `complete_in_progress` is not "completed"
+        state.status = response.get("status", state.status)
+        logger.info(f"Checkout {state.checkout_id} is {state.status}; order {(response.get('order') or {}).get('id')}")
         return response
 
     def _parse_address(self, address_str: str) -> Dict[str, str]:

@@ -15,11 +15,12 @@ from .models import (
 )
 from .auth.dependencies import get_current_user, get_current_user_optional
 from .webhooks import auth_router
-from .ucp.client import UCPClient
+from .ucp.client import UCPClient, UCPError
 from .nlu.openai_client import NLUClient
 from .services.catalog_service import CatalogService
 from .services.checkout_service import CheckoutService
 from .services.payment_service import PaymentService
+from .services.buyer_input import missing_address_parts, unverified_fields
 from .utils.logger import setup_logger
 
 logger = setup_logger(__name__, settings.log_level)
@@ -177,6 +178,7 @@ async def chat(
         order = None
         merchant_auth_required = False
         merchant_auth_url = None
+        merchant_error: Optional[str] = None
 
         # Multi-turn tool calling loop (max 3 turns to prevent infinite loops)
         max_iterations = 3
@@ -413,32 +415,59 @@ async def chat(
                         if not user:
                             tool_result = "ERROR: You must login to complete orders. Please login to continue."
                         else:
-                            # Store buyer info
                             buyer_info = {
                                 "buyer_name": arguments["buyer_name"],
                                 "buyer_email": arguments["buyer_email"],
                                 "shipping_address": arguments["shipping_address"],
                             }
-                            state.buyer_info = buyer_info
-
-                            # Setup fulfillment with parsed address
+                            user_messages = [
+                                m.content for m in state.messages if m.role == "user"
+                            ]
+                            invented = unverified_fields(buyer_info, user_messages)
                             shipping_address = payment_service._parse_address(
                                 buyer_info["shipping_address"]
                             )
-                            merchant_token = (state.merchant_auth or {}).get("access_token")
-                            await checkout_service.setup_fulfillment(
-                                state, shipping_address, merchant_token
-                            )
+                            missing = missing_address_parts(shipping_address)
 
-                            # Complete checkout
-                            order_response = await payment_service.complete_checkout(
-                                state, buyer_info, merchant_token
-                            )
-                            order = order_response.get("order", {})
-                            tool_result = f"Order completed successfully"
+                            if invented:
+                                # The model supplied details the user never typed
+                                logger.warning(f"complete_order rejected, unverified fields: {invented}")
+                                tool_result = (
+                                    "ERROR: Do not guess order details. The user has not provided: "
+                                    + ", ".join(f.replace("buyer_", "").replace("_", " ") for f in invented)
+                                    + ". Ask the user for them, then call complete_order again."
+                                )
+                            elif missing:
+                                tool_result = (
+                                    "ERROR: The shipping address is incomplete (missing "
+                                    + ", ".join(missing)
+                                    + "). Ask the user for the full address as "
+                                    "'street, city, STATE ZIP'."
+                                )
+                            else:
+                                state.buyer_info = buyer_info
+                                merchant_token = (state.merchant_auth or {}).get("access_token")
+                                await checkout_service.setup_fulfillment(
+                                    state, shipping_address, merchant_token
+                                )
+                                order_response = await payment_service.complete_checkout(
+                                    state, buyer_info, merchant_token
+                                )
+                                order = order_response.get("order", {})
+                                tool_result = "Order completed successfully"
 
-                except Exception as e:
+                except UCPError as e:
+                    # Merchant failures are shown to the shopper as-is, not
+                    # paraphrased by the model, and are not retried.
+                    logger.error(f"Merchant error in {tool_name}: {e}")
+                    merchant_error = e.user_message()
+                    tool_result = f"Error: {merchant_error}"
+                except ValueError as e:
                     logger.error(f"Tool execution error ({tool_name}): {e}")
+                    merchant_error = str(e)
+                    tool_result = f"Error: {e}"
+                except Exception as e:
+                    logger.error(f"Tool execution error ({tool_name}): {e}", exc_info=True)
                     tool_result = f"Error: {str(e)}"
 
                 # Add tool result to messages for next OpenAI call
@@ -447,6 +476,12 @@ async def chat(
                     "tool_call_id": tool_id,
                     "content": tool_result
                 })
+
+            if merchant_error:
+                break
+
+        if merchant_error:
+            assistant_message = merchant_error
 
         # Add final assistant message to history
         if assistant_message:

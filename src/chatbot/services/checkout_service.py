@@ -256,104 +256,92 @@ class CheckoutService:
         merchant_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Setup fulfillment with shipping address and select first available option.
+        Set the shipping destination, then select the first offered option.
+
+        UCP 2026-08-25 fulfillment: a method needs `id` and `line_item_ids`;
+        a destination needs `id` and `type` and carries a flat postal address.
+        Options are offered on `groups[]` and chosen with `selected_option_id`.
 
         Args:
             state: Conversation state
-            shipping_address: Shipping address dictionary
+            shipping_address: Flat postal address (street_address, address_locality,
+                address_region, postal_code, address_country)
+            merchant_token: Optional merchant access token
 
         Returns:
-            Updated checkout session with fulfillment options
+            Checkout response with a shipping option selected
+
+        Raises:
+            ValueError: no checkout, or the merchant offered no shipping option
         """
         if not state.checkout_id:
             raise ValueError("No active checkout session")
 
-        # Get current checkout to build complete payload
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
+        current = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
+        line_item_ids = [li["id"] for li in current.get("line_items", []) if li.get("id")]
+        if not line_item_ids:
+            raise ValueError("Checkout has no line items to fulfill")
 
-        # Step 1: Update with fulfillment.methods to trigger options
-        update_payload = {
-            "id": state.checkout_id,
-            "line_items": current_checkout.get("line_items", []),
-            "currency": current_checkout.get("currency", "USD"),
-            "payment": current_checkout.get("payment", {"handlers": ["mock_payment_handler"]}),
-            "fulfillment": {
-                "methods": [
-                    {
-                        "type": "shipping",
-                        "destinations": [
-                            {
-                                "id": "dest_1",
-                                "postal_address": shipping_address,
-                            }
-                        ],
-                    }
-                ],
-            }
+        destination_id = "dest_1"
+        payload = self._replace_body(current)
+        payload["fulfillment"] = {
+            "methods": [
+                {
+                    "id": "method_1",
+                    "type": "shipping",
+                    "line_item_ids": line_item_ids,
+                    "destinations": [
+                        {"id": destination_id, "type": "shipping", **shipping_address}
+                    ],
+                    "selected_destination_id": destination_id,
+                }
+            ]
         }
 
-        # Preserve discounts if any
-        if current_checkout.get("discounts"):
-            update_payload["discounts"] = current_checkout["discounts"]
-
-        # Preserve buyer if any
-        if current_checkout.get("buyer"):
-            update_payload["buyer"] = current_checkout["buyer"]
-
         response = await self.ucp_client.update_checkout(
-            state.checkout_id,
-            update_payload,
-            merchant_token
+            state.checkout_id, payload, merchant_token
         )
+        logger.info("Set fulfillment destination")
 
-        logger.info("Triggered fulfillment options")
+        # Select the first offered option on every group that has one
+        fulfillment = response.get("fulfillment") or {}
+        selected = None
+        for method in fulfillment.get("methods", []):
+            for group in method.get("groups", []):
+                options = group.get("options", [])
+                if options:
+                    group["selected_option_id"] = options[0]["id"]
+                    selected = options[0]["id"]
 
-        # Step 2: Select first available option
-        fulfillment = response.get("fulfillment")
-        if fulfillment and isinstance(fulfillment, dict):
-            # Check for options in methods (UCP format has options nested in methods/groups)
-            methods = fulfillment.get("methods", [])
-            if methods:
-                for method in methods:
-                    groups = method.get("groups", [])
-                    if groups:
-                        # Found groups with options, select the first one
-                        first_group = groups[0]
-                        options = first_group.get("options", [])
-                        if options:
-                            first_option = options[0]
+        if selected is None:
+            raise ValueError("The merchant offered no shipping options for this address")
 
-                            # Get updated checkout and add selection
-                            current = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
-                            current_fulfillment = current.get("fulfillment", {})
-                            current_methods = current_fulfillment.get("methods", [])
+        selection = self._replace_body(response)
+        selection["fulfillment"] = fulfillment
+        result = await self.ucp_client.update_checkout(
+            state.checkout_id, selection, merchant_token
+        )
+        logger.info(f"Selected fulfillment option {selected}")
+        return result
 
-                            # Update the first method's first group with selected option
-                            if current_methods:
-                                current_methods[0]["groups"][0]["selected_option_id"] = first_option["id"]
+    @staticmethod
+    def _replace_body(checkout: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build a full-replacement PUT body from a checkout response.
 
-                            selection_payload = {
-                                "id": state.checkout_id,
-                                "line_items": current.get("line_items", []),
-                                "currency": current.get("currency", "USD"),
-                                "payment": current.get("payment", {"handlers": ["mock_payment_handler"]}),
-                                "fulfillment": current_fulfillment
-                            }
-
-                            if current.get("discounts"):
-                                selection_payload["discounts"] = current["discounts"]
-                            if current.get("buyer"):
-                                selection_payload["buyer"] = current["buyer"]
-
-                            selection_response = await self.ucp_client.update_checkout(
-                                state.checkout_id,
-                                selection_payload,
-                                merchant_token
-                            )
-                            logger.info(f"Selected fulfillment option {first_option['id']}")
-                            return selection_response
-
-        return response
+        PUT replaces the session, so everything worth keeping must be resent.
+        Only fields the spec allows in a request are copied; response-only
+        fields (totals, links, status, ucp, ...) are dropped.
+        """
+        body: Dict[str, Any] = {
+            "id": checkout["id"],
+            "line_items": checkout.get("line_items", []),
+            "currency": checkout.get("currency", "USD"),
+        }
+        for key in ("buyer", "discounts", "payment", "context"):
+            if checkout.get(key):
+                body[key] = checkout[key]
+        return body
 
     async def get_checkout_summary(self, state: ConversationState, merchant_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
