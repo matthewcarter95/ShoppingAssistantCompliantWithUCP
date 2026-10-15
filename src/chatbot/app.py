@@ -19,8 +19,10 @@ from .ucp.client import UCPClient, UCPError
 from .nlu.openai_client import NLUClient
 from .services.catalog_service import CatalogService
 from .services.checkout_service import CheckoutService
-from .services.payment_service import PaymentService
-from .services.buyer_input import missing_address_parts, unverified_fields
+from .services.payment_service import PaymentService, PointsRequest
+from .services.buyer_input import dollars_to_cents, points_question_answered
+from .services.checkout_details import CONFIRM, READY, resolve_checkout_details
+from .services.buyer_claims import buyer_profile_from_token
 from .utils.logger import setup_logger
 
 logger = setup_logger(__name__, settings.log_level)
@@ -58,6 +60,27 @@ payment_service = PaymentService(ucp_client)
 
 # Include webhook routers
 app.include_router(auth_router)
+
+
+def begin_merchant_authorization(state, session_id: str) -> str:
+    """
+    Start a merchant OAuth (PKCE) flow for this session and return the URL.
+
+    The verifier and state are parked on the session for the callback.
+    """
+    from .auth.merchant_oauth import merchant_oauth_client
+
+    code_verifier, code_challenge = merchant_oauth_client.generate_pkce_pair()
+    intent = "create"
+    oauth_state = merchant_oauth_client.generate_state(session_id, intent)
+    if not state.merchant_auth:
+        state.merchant_auth = {}
+    state.merchant_auth["pending_code_verifier"] = code_verifier
+    state.merchant_auth["pending_state"] = oauth_state
+    conversation_manager.update_session(state)
+    return merchant_oauth_client.build_authorization_url(
+        state=oauth_state, code_challenge=code_challenge, intent=intent
+    )
 
 
 @app.get("/health")
@@ -179,6 +202,7 @@ async def chat(
         merchant_auth_required = False
         merchant_auth_url = None
         merchant_error: Optional[str] = None
+        forced_reply: Optional[str] = None  # shown verbatim; ends the tool loop
 
         # Multi-turn tool calling loop (max 3 turns to prevent infinite loops)
         max_iterations = 3
@@ -211,7 +235,12 @@ async def chat(
                 tool_id = tool_call["id"]
                 arguments = json.loads(tool_call["arguments"])
 
-                logger.info(f"Executing tool: {tool_name} with args: {arguments}")
+                # Buyer name, email and address are personal data: keep them out of the logs
+                logged_args = {
+                    k: ("<redacted>" if k.startswith(("buyer_", "shipping_")) else v)
+                    for k, v in arguments.items()
+                }
+                logger.info(f"Executing tool: {tool_name} with args: {logged_args}")
 
                 tool_result = ""
                 try:
@@ -415,52 +444,87 @@ async def chat(
                         if not user:
                             tool_result = "ERROR: You must login to complete orders. Please login to continue."
                         else:
-                            buyer_info = {
-                                "buyer_name": arguments["buyer_name"],
-                                "buyer_email": arguments["buyer_email"],
-                                "shipping_address": arguments["shipping_address"],
-                            }
-                            user_messages = [
-                                m.content for m in state.messages if m.role == "user"
-                            ]
-                            invented = unverified_fields(buyer_info, user_messages)
-                            shipping_address = payment_service._parse_address(
-                                buyer_info["shipping_address"]
+                            merchant_token = (state.merchant_auth or {}).get("access_token")
+                            token_profile = buyer_profile_from_token(
+                                merchant_token,
+                                settings.merchant_claims_namespace,
+                                settings.merchant_claim_name,
+                                settings.merchant_claim_email,
+                                settings.merchant_claim_address,
                             )
-                            missing = missing_address_parts(shipping_address)
-
-                            if invented:
-                                # The model supplied details the user never typed
-                                logger.warning(f"complete_order rejected, unverified fields: {invented}")
-                                tool_result = (
-                                    "ERROR: Do not guess order details. The user has not provided: "
-                                    + ", ".join(f.replace("buyer_", "").replace("_", " ") for f in invented)
-                                    + ". Ask the user for them, then call complete_order again."
-                                )
-                            elif missing:
-                                tool_result = (
-                                    "ERROR: The shipping address is incomplete (missing "
-                                    + ", ".join(missing)
-                                    + "). Ask the user for the full address as "
-                                    "'street, city, STATE ZIP'."
-                                )
+                            decision = resolve_checkout_details(
+                                state.messages,
+                                arguments,
+                                token_profile,
+                                payment_service._parse_address,
+                            )
+                            if decision.kind == CONFIRM:
+                                forced_reply = decision.message
+                                tool_result = "Waiting for the user to confirm their saved details."
+                            elif decision.kind != READY:
+                                tool_result = decision.message
                             else:
+                                buyer_info = decision.buyer_info
+                                shipping_address = decision.address
+                                logger.info(f"Placing order with {decision.source} details")
                                 state.buyer_info = buyer_info
-                                merchant_token = (state.merchant_auth or {}).get("access_token")
-                                await checkout_service.setup_fulfillment(
-                                    state, shipping_address, merchant_token
+                                use_points = arguments.get("use_points")
+
+                                # Ask about points at every checkout, but only for
+                                # shoppers the merchant recognizes as members.
+                                checkout_now = await ucp_client.get_checkout(
+                                    state.checkout_id, merchant_token
                                 )
-                                order_response = await payment_service.complete_checkout(
-                                    state, buyer_info, merchant_token
-                                )
-                                order = order_response.get("order", {})
-                                tool_result = "Order completed successfully"
+                                is_member = bool(checkout_now.get("loyalty"))
+                                points = None
+                                if is_member and not points_question_answered(state.messages):
+                                    tool_result = (
+                                        "ERROR: Before placing the order, ask the user whether they "
+                                        "want to pay part of it with their loyalty points (at most "
+                                        "half the total). Wait for their answer, then call "
+                                        "complete_order again with use_points set."
+                                    )
+                                elif is_member and use_points is None:
+                                    tool_result = (
+                                        "ERROR: Set use_points to the user's answer: 'no', 'max' "
+                                        "or 'amount' (with points_amount_dollars)."
+                                    )
+                                else:
+                                    if is_member and use_points == "max":
+                                        points = PointsRequest()
+                                    elif is_member and use_points == "amount":
+                                        if arguments.get("points_amount_dollars") is None:
+                                            raise ValueError(
+                                                "How many dollars of points would you like to use?"
+                                            )
+                                        points = PointsRequest(
+                                            dollars_to_cents(arguments["points_amount_dollars"])
+                                        )
+                                    await checkout_service.setup_fulfillment(
+                                        state, shipping_address, merchant_token
+                                    )
+                                    order_response = await payment_service.complete_checkout(
+                                        state, buyer_info, merchant_token, points=points,
+                                        address=shipping_address,
+                                    )
+                                    order = order_response.get("order", {})
+                                    tool_result = "Order completed successfully"
 
                 except UCPError as e:
                     # Merchant failures are shown to the shopper as-is, not
                     # paraphrased by the model, and are not retried.
                     logger.error(f"Merchant error in {tool_name}: {e}")
-                    merchant_error = e.user_message()
+                    if e.needs_reauthorization:
+                        # Missing or under-scoped token: send the shopper back
+                        # through "Connect Merchant Account" instead of an error.
+                        merchant_auth_url = begin_merchant_authorization(state, request.session_id)
+                        merchant_auth_required = True
+                        merchant_error = (
+                            "The merchant needs you to reconnect your account before "
+                            "this can go through. Use the Connect Merchant Account button."
+                        )
+                    else:
+                        merchant_error = e.user_message()
                     tool_result = f"Error: {merchant_error}"
                 except ValueError as e:
                     logger.error(f"Tool execution error ({tool_name}): {e}")
@@ -477,11 +541,13 @@ async def chat(
                     "content": tool_result
                 })
 
-            if merchant_error:
+            if merchant_error or forced_reply:
                 break
 
         if merchant_error:
             assistant_message = merchant_error
+        elif forced_reply:
+            assistant_message = forced_reply
 
         # Add final assistant message to history
         if assistant_message:

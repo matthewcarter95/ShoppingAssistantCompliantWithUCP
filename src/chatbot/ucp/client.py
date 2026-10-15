@@ -52,6 +52,19 @@ class UCPError(Exception):
     def codes(self) -> Set[str]:
         return {str(m.get("code")) for m in self.messages if m.get("code")}
 
+    @property
+    def needs_reauthorization(self) -> bool:
+        """
+        True when the merchant wants the buyer to (re)connect their account.
+
+        `identity_required` (401): no valid token. `insufficient_scope` (403):
+        the token lacks a scope this operation needs, as with tokens issued
+        before the merchant split `manage` from `complete`.
+        """
+        return self.status_code in (401, 403) and bool(
+            self.codes & {"identity_required", "insufficient_scope"}
+        )
+
     def user_message(self) -> str:
         """
         Text that is safe to show a shopper.

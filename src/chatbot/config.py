@@ -43,7 +43,14 @@ class Settings(BaseSettings):
     merchant_auth0_domain: str = "universal-commerce-merchant.cic-demo-platform.auth0app.com"
     merchant_auth0_client_id: str = "C70smEFi7G1XQBO9KVeBN5adJWpfQeDo"
     merchant_auth0_audience: str = "api://ucp.session.service"
-    merchant_auth0_scope: str = "openid profile email ucp:scopes:checkout_session"
+    merchant_auth0_scope: str = "openid profile email mock.ucp.shopping.checkout:manage mock.ucp.shopping.checkout:complete"
+
+    # Custom claims on the merchant access token that carry checkout details.
+    # Full claim = "<namespace>/<claim name>", e.g. https://demo.okta.com/name
+    merchant_claims_namespace: str = "https://demo.okta.com"
+    merchant_claim_name: str = "name"
+    merchant_claim_email: str = "email"
+    merchant_claim_address: str = "shippingAddress"
 
     # Chatbot base URL (Lambda Function URL)
     chatbot_base_url: str = "https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws"

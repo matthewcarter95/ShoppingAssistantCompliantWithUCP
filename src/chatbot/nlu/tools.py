@@ -40,10 +40,19 @@ FUNCTION USAGE RULES:
 
 7. complete_order - Checkout
    - Examples: "complete my order", "checkout", "place order"
-   - NEVER call this until the user has typed their full name, email address and
-     shipping address in this conversation. If any is missing, ask for it first.
-     NEVER invent, guess or reuse placeholder values (such as "John Doe" or
-     "123 Main St"). Ask for the address as "street, city, STATE ZIP".
+   - Order details come from the user only. Call complete_order when they want to
+     check out; if their merchant account has saved name, email and address, the
+     system shows them and asks the user to confirm. When the user answers, call
+     complete_order again. If they gave different details, pass exactly what they
+     typed.
+   - NEVER invent, guess or reuse placeholder values (such as "John Doe" or
+     "123 Main St"). If you need details, ask for them; ask for the address as
+     "street, city, STATE ZIP".
+   - LOYALTY POINTS: if the function returns an error asking you to offer points,
+     ask the user whether they want to pay part of the order with their points
+     (they can cover at most half), then call complete_order again with their
+     answer: use_points="no", "max" (as many as allowed) or "amount" together
+     with points_amount_dollars. Never decide this for the user.
    - If a function returns an error, tell the user what it says. Do not retry the
      same call and do not say the order went through.
 
@@ -165,7 +174,7 @@ CHATBOT_TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "complete_order",
-            "description": "Complete the order and process payment. Only call after the user has typed their own full name, email and shipping address in this conversation. Never invent or guess these values.",
+            "description": "Complete the order and process payment. Buyer details are optional: leave them out unless the user typed them in this conversation. Never invent or guess these values.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,8 +190,17 @@ CHATBOT_TOOLS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Full shipping address as typed by the user, formatted as: street, city, STATE ZIP",
                     },
+                    "use_points": {
+                        "type": "string",
+                        "enum": ["no", "max", "amount"],
+                        "description": "Whether to pay part with loyalty points, exactly as the user answered: 'no', 'max' (as many as allowed), or 'amount' (a specific dollar value). Omit if the user has not been asked.",
+                    },
+                    "points_amount_dollars": {
+                        "type": "number",
+                        "description": "Dollar value of points to spend. Only with use_points='amount'.",
+                    },
                 },
-                "required": ["buyer_name", "buyer_email", "shipping_address"],
+                "required": [],
             },
         },
     },

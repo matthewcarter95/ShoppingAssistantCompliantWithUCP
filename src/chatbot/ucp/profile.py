@@ -30,7 +30,13 @@ AGENT_CAPABILITIES: Set[str] = {
     "dev.ucp.shopping.buyer_consent",
     "dev.ucp.shopping.catalog.search",
     "dev.ucp.shopping.catalog.lookup",
+    "dev.ucp.common.identity_linking",
+    "dev.ucp.common.loyalty",
+    "dev.ucp.common.payment.split_payments",
 }
+
+SPLIT_PAYMENTS_CAPABILITY = "dev.ucp.common.payment.split_payments"
+LOYALTY_HANDLER_ID = "mock_loyalty_points"
 
 # Cache-Control max-age bounds. The spec requires merchants to serve at least 60s.
 MIN_CACHE_SECONDS = 60
