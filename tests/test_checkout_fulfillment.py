@@ -174,3 +174,62 @@ async def test_complete_in_progress_is_not_reported_as_completed():
     await PaymentService(client).complete_checkout(
         st, {"buyer_name": "J", "buyer_email": "j@e.co", "shipping_address": "1 A St, B, TX 78701"})
     assert st.status == "complete_in_progress"
+
+
+# --- cart merging --------------------------------------------------------
+
+def line(lid, pid, qty=1):
+    return {"id": lid, "item": {"id": pid, "title": pid.title(), "price": 2500}, "quantity": qty,
+            "totals": [{"type": "total", "amount": 2500 * qty}]}
+
+
+def test_adding_a_product_already_in_the_cart_increases_its_quantity():
+    merged = CheckoutService.merge_line_item([line("li_1", "roses")], "roses", 1)
+    assert merged == [{"id": "li_1", "item": {"id": "roses"}, "quantity": 2}]
+
+
+def test_adding_a_new_product_appends_a_line_and_keeps_existing_ids():
+    merged = CheckoutService.merge_line_item([line("li_1", "roses", 2)], "tulips", 3)
+    assert merged == [{"id": "li_1", "item": {"id": "roses"}, "quantity": 2},
+                      {"item": {"id": "tulips"}, "quantity": 3}]
+
+
+def test_merge_sends_only_request_valid_fields():
+    merged = CheckoutService.merge_line_item([line("li_1", "roses")], "tulips", 1)
+    for entry in merged:
+        assert set(entry) <= {"id", "item", "quantity"}
+        assert set(entry["item"]) == {"id"}                  # title/price/totals are response-only
+
+
+def test_merging_into_a_cart_that_already_has_duplicates_increases_only_the_first():
+    merged = CheckoutService.merge_line_item([line("a", "roses"), line("b", "roses")], "roses", 1)
+    assert [m["quantity"] for m in merged] == [2, 1]
+
+
+async def test_add_item_sends_one_line_of_two_for_a_repeated_product():
+    client = MagicMock()
+    client.get_checkout = AsyncMock(return_value={**CHECKOUT, "line_items": [line("li_1", "bouquet_sunflowers")]})
+    client.update_checkout = AsyncMock(return_value=CHECKOUT)
+    await CheckoutService(client).add_item(state(), "bouquet_sunflowers", 1, None, "tok")
+
+    body = client.update_checkout.call_args.args[1]
+    assert body["line_items"] == [{"id": "li_1", "item": {"id": "bouquet_sunflowers"}, "quantity": 2}]
+    assert client.update_checkout.call_args.args[2] == "tok"
+
+
+async def test_add_item_starts_a_new_checkout_when_the_old_one_is_completed():
+    client = MagicMock()
+    client.get_checkout = AsyncMock(return_value={**CHECKOUT, "status": "completed"})
+    client.create_checkout_with_payload = AsyncMock(return_value={"id": "chk_2"})
+    st = state()
+    await CheckoutService(client).add_item(st, "bouquet_roses", 2, None, "tok")
+
+    client.update_checkout.assert_not_called()
+    payload = client.create_checkout_with_payload.call_args.args[0]
+    assert payload["line_items"] == [{"item": {"id": "bouquet_roses"}, "quantity": 2}]
+    assert st.checkout_id == "chk_2"
+
+
+async def test_zero_quantity_is_rejected():
+    with pytest.raises(ValueError):
+        await CheckoutService(MagicMock()).add_item(state(), "bouquet_roses", 0)

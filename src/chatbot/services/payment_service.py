@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 
 from ..ucp.client import UCPClient
 from ..ucp.profile import LOYALTY_HANDLER_ID, SPLIT_PAYMENTS_CAPABILITY
+from .checkout_payment import SavedCard
 from ..conversation.state import ConversationState
 from ..utils.logger import setup_logger
 from ..config import settings
@@ -70,6 +71,7 @@ class PaymentService:
         merchant_token: Optional[str] = None,
         points: Optional[PointsRequest] = None,
         address: Optional[Dict[str, str]] = None,
+        card: Optional[SavedCard] = None,
     ) -> Dict[str, Any]:
         """
         Complete checkout with mock payment, optionally paying part in points.
@@ -82,6 +84,9 @@ class PaymentService:
                 covers the remainder
             address: Already-structured UCP postal address to use as the billing
                 address. When omitted, buyer_info["shipping_address"] is parsed.
+            card: A card the merchant has saved for this buyer. Only its id is
+                sent; the merchant supplies the credential. When omitted, the
+                mock test card is used.
 
         Returns:
             Order completion response
@@ -97,13 +102,16 @@ class PaymentService:
 
         # UCP 2026-08-25: payment.instruments[], each tied to a handler by id.
         # The mock handler accepts "success_token"; "fail_token" simulates a decline.
-        instrument = {
-            "id": "card_1",
-            "handler_id": "mock_payment_handler",
-            "type": "card",
-            "credential": {"type": "token", "token": "success_token"},
-            "billing_address": shipping_address,
-        }
+        if card is not None:
+            instrument = {"id": card.id, "handler_id": card.handler_id, "type": "card"}
+        else:
+            instrument = {
+                "id": "card_1",
+                "handler_id": "mock_payment_handler",
+                "type": "card",
+                "credential": {"type": "token", "token": "success_token"},
+                "billing_address": shipping_address,
+            }
         instruments = [instrument]
 
         if points is not None:

@@ -52,6 +52,7 @@ def resolve_checkout_details(
     arguments: Dict[str, Any],
     token_profile: Optional[BuyerProfile],
     parse_address: Callable[[str], Dict[str, str]],
+    since: int = 0,
 ) -> DetailsDecision:
     """
     Pick the details to order with, or say what is still needed.
@@ -61,6 +62,9 @@ def resolve_checkout_details(
         arguments: what the model passed to complete_order (untrusted)
         token_profile: details from the merchant token, if it carried them
         parse_address: turns a typed address line into a UCP flat address
+        since: index in `messages` where the current checkout conversation
+            starts. Details the shopper typed earlier still count; a saved-details
+            confirmation only counts if it happened at or after this point.
     """
     buyer_info = {f: str(arguments.get(f) or "") for f in DETAIL_FIELDS}
     typed = [m.content for m in messages if m.role == "user"]
@@ -93,7 +97,8 @@ def resolve_checkout_details(
         )
 
     # 3. Saved details the shopper has confirmed.
-    if details_confirmed(messages, token_profile):
+    scoped = messages[since:]
+    if details_confirmed(scoped, token_profile):
         return DetailsDecision(
             READY,
             buyer_info=token_profile.as_buyer_info(),
@@ -103,8 +108,8 @@ def resolve_checkout_details(
 
     # 4. Saved details were shown and the shopper replied with something other
     #    than a plain yes: they want changes, so collect details by typing.
-    shown = confirmation_shown_index(messages, token_profile)
-    if shown >= 0 and any(m.role == "user" for m in messages[shown + 1:]):
+    shown = confirmation_shown_index(scoped, token_profile)
+    if shown >= 0 and any(m.role == "user" for m in scoped[shown + 1:]):
         return DetailsDecision(
             ASK,
             message=(
@@ -119,7 +124,9 @@ def resolve_checkout_details(
 
 
 STAGE_DETAILS = "details"
+STAGE_CARD = "card"
 STAGE_POINTS = "points"
+OPEN_QUESTION_STAGES = (STAGE_DETAILS, STAGE_CARD, STAGE_POINTS)
 
 _CHECKOUT_INTENT = re.compile(
     r"\b(check\s?out|complete[_ ]?(my |the |this )?order|place (my |the |this |an? )?order|"
@@ -149,7 +156,7 @@ def should_force_complete_order(message: str, has_checkout: bool, stage: Optiona
         return False
     if wants_checkout(message):
         return True
-    if stage in (STAGE_DETAILS, STAGE_POINTS):
+    if stage in OPEN_QUESTION_STAGES:
         # A reply to our question is short; a long message is a new request.
         return len((message or "").split()) <= 25 and not _OTHER_INTENT.search(message or "")
     return False

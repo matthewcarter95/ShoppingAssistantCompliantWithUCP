@@ -21,9 +21,16 @@ from .services.catalog_service import CatalogService
 from .services.checkout_service import CheckoutService
 from .services.payment_service import PaymentService, PointsRequest
 from .services.buyer_input import dollars_to_cents, points_question_answered
+from .services.checkout_payment import (
+    ASK as CARD_ASK,
+    build_receipt,
+    resolve_card_choice,
+    saved_cards_from,
+)
 from .services.checkout_details import (
     CONFIRM,
     READY,
+    STAGE_CARD,
     STAGE_DETAILS,
     STAGE_POINTS,
     points_offer,
@@ -216,6 +223,7 @@ async def chat(
         merchant_auth_url = None
         merchant_error: Optional[str] = None
         forced_reply: Optional[str] = None  # shown verbatim; ends the tool loop
+        order_completed = False
         merchant_auth_prompt: Optional[str] = None
 
         # Multi-turn tool calling loop (max 3 turns to prevent infinite loops)
@@ -500,6 +508,7 @@ async def chat(
                                 arguments,
                                 token_profile,
                                 payment_service._parse_address,
+                                since=state.checkout_floor,
                             )
                             if decision.kind == CONFIRM:
                                 forced_reply = decision.message
@@ -519,9 +528,30 @@ async def chat(
                                 checkout_now = await ucp_client.get_checkout(
                                     state.checkout_id, merchant_token
                                 )
+                                scoped_messages = state.messages[state.checkout_floor:]
+
+                                # 1. Which card? The merchant lists the buyer's saved cards
+                                #    on the checkout; the shopper picks one and only its id is sent.
+                                cards = saved_cards_from(checkout_now)
+                                chosen_card = None
+                                card_pending = False
+                                if cards:
+                                    card_decision = resolve_card_choice(scoped_messages, cards)
+                                    if card_decision.kind == CARD_ASK:
+                                        card_pending = True
+                                        forced_reply = card_decision.message
+                                        state.checkout_stage = STAGE_CARD
+                                        tool_result = "Waiting for the user to choose a saved card."
+                                    else:
+                                        chosen_card = card_decision.card
+
+                                # 2. Loyalty points: asked at every checkout, but only of
+                                #    shoppers the merchant recognizes as members.
                                 is_member = bool(checkout_now.get("loyalty"))
                                 points = None
-                                if is_member and not points_question_answered(state.messages):
+                                if card_pending:
+                                    pass
+                                elif is_member and not points_question_answered(scoped_messages):
                                     profile = await ucp_client.get_profile()
                                     handler = profile.handler_by_id("mock_loyalty_points") or {}
                                     config = handler.get("config") or {}
@@ -552,10 +582,31 @@ async def chat(
                                     )
                                     order_response = await payment_service.complete_checkout(
                                         state, buyer_info, merchant_token, points=points,
-                                        address=shipping_address,
+                                        address=shipping_address, card=chosen_card,
                                     )
                                     order = order_response.get("order", {})
                                     state.checkout_stage = None
+
+                                    # Write the confirmation from the merchant's own response
+                                    handler_cfg = (
+                                        (await ucp_client.get_profile()).handler_by_id("mock_loyalty_points") or {}
+                                    ).get("config") or {}
+                                    forced_reply = build_receipt(
+                                        order_response,
+                                        buyer_name=buyer_info["buyer_name"],
+                                        address_line=", ".join(
+                                            p for p in (
+                                                shipping_address.get("street_address"),
+                                                shipping_address.get("address_locality"),
+                                                " ".join(x for x in (shipping_address.get("address_region"),
+                                                                     shipping_address.get("postal_code")) if x),
+                                            ) if p
+                                        ),
+                                        card_labels={c.id: c.label() for c in cards} or {"card_1": "Test card"},
+                                        cents_per_point=int(handler_cfg.get("cents_per_point") or 1),
+                                        points_name=(handler_cfg.get("currency") or {}).get("name"),
+                                    )
+                                    order_completed = True
                                     tool_result = "Order completed successfully"
 
                 except UCPError as e:
@@ -600,6 +651,10 @@ async def chat(
         # Add final assistant message to history
         if assistant_message:
             state.add_message("assistant", assistant_message)
+
+        # The next order in this session starts a fresh set of checkout questions
+        if order_completed:
+            state.checkout_floor = len(state.messages)
 
         # Update session in database
         conversation_manager.update_session(state)

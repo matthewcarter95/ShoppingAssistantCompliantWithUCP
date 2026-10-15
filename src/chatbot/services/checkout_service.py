@@ -75,42 +75,73 @@ class CheckoutService:
         Returns:
             Updated checkout session response
         """
-        # Build line item in UCP format
-        line_item = {
-            "item": {
-                "type": "Product",
-                "id": product_id,
-            },
-            "quantity": quantity,
-        }
+        if quantity < 1:
+            raise ValueError("Quantity must be at least 1")
 
         # If no checkout exists, create one
         if not state.checkout_id:
-            return await self.start_checkout(state, [line_item], merchant_token)
+            return await self.start_checkout(
+                state, [self._new_line_item(product_id, quantity)], merchant_token
+            )
 
-        # Otherwise, update existing checkout - need full payload
-        current_checkout = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
-        existing_items = current_checkout.get("line_items", [])
-        existing_items.append(line_item)
+        current = await self.ucp_client.get_checkout(state.checkout_id, merchant_token)
 
-        update_payload = {
-            "id": state.checkout_id,
-            "line_items": existing_items,
-            "currency": current_checkout.get("currency", "USD"),
-            "payment": current_checkout.get("payment", {"handlers": ["mock_payment_handler"]}),
-        }
+        # A finished checkout cannot take more items: start a fresh cart
+        if current.get("status") in ("completed", "canceled"):
+            logger.info(f"Checkout {state.checkout_id} is {current['status']}; starting a new one")
+            state.checkout_id = None
+            state.line_items = []
+            return await self.start_checkout(
+                state, [self._new_line_item(product_id, quantity)], merchant_token
+            )
 
-        # Preserve discounts if any
-        if current_checkout.get("discounts"):
-            update_payload["discounts"] = current_checkout["discounts"]
+        line_items = self.merge_line_item(current.get("line_items", []), product_id, quantity)
+
+        payload = self._replace_body(current)
+        payload["line_items"] = line_items
 
         response = await self.ucp_client.update_checkout(
-            state.checkout_id, update_payload, merchant_token
+            state.checkout_id, payload, merchant_token
         )
 
-        state.line_items = existing_items
+        state.line_items = line_items
         logger.info(f"Added {quantity}x {product_id} to checkout {state.checkout_id}")
         return response
+
+    @staticmethod
+    def _new_line_item(product_id: str, quantity: int) -> Dict[str, Any]:
+        """A line item as the merchant expects it in a request."""
+        return {"item": {"id": product_id}, "quantity": quantity}
+
+    @staticmethod
+    def merge_line_item(
+        existing: List[Dict[str, Any]], product_id: str, quantity: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Add `quantity` of a product to a checkout's line items.
+
+        A product already in the cart has its quantity increased, so adding
+        sunflowers twice gives one line of 2, not two lines of 1. Existing lines
+        keep their ids, because a PUT replaces the whole cart. Only
+        request-valid fields are sent (item title, price and totals are
+        response-only).
+        """
+        merged: List[Dict[str, Any]] = []
+        found = False
+        for line in existing:
+            entry: Dict[str, Any] = {
+                "item": {"id": line["item"]["id"]},
+                "quantity": line.get("quantity", 1),
+            }
+            if line.get("id"):
+                entry["id"] = line["id"]
+            if line["item"]["id"] == product_id and not found:
+                entry["quantity"] += quantity
+                found = True
+            merged.append(entry)
+        if not found:
+            merged.append(CheckoutService._new_line_item(product_id, quantity))
+        return merged
 
     async def update_item_quantity(
         self,

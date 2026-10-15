@@ -83,6 +83,11 @@ _AFFIRMATIVE = re.compile(
 _CORRECTION = re.compile(r"\b(no|not|nope|change|instead|wrong|actually|but|different)\b", re.IGNORECASE)
 
 
+def is_affirmative(text: str) -> bool:
+    """True for a plain yes ("yes", "ok", "sounds good"...) with no correction wording."""
+    return bool(_AFFIRMATIVE.match(text or "")) and not _CORRECTION.search(text or "")
+
+
 def confirmation_shown_index(messages, profile) -> int:
     """
     Index of the latest assistant message that showed `profile` to the shopper

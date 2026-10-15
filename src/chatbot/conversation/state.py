@@ -30,6 +30,10 @@ class ConversationState(BaseModel):
     # True once the shopper has been invited to connect their merchant account,
     # so the invitation appears once per session.
     connect_offered: bool = False
+    # Index into `messages` where the current checkout conversation starts.
+    # Our checkout questions (details, card, points) are only looked for after
+    # it, so a second order in the same session is asked again.
+    checkout_floor: int = 0
     created_at: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
     updated_at: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
     ttl: Optional[int] = None
@@ -53,6 +57,7 @@ class ConversationState(BaseModel):
             "status": self.status,
             "checkout_stage": self.checkout_stage,
             "connect_offered": self.connect_offered,
+            "checkout_floor": self.checkout_floor,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "ttl": self.ttl,
@@ -73,6 +78,7 @@ class ConversationState(BaseModel):
             status=item.get("status", "init"),
             checkout_stage=item.get("checkout_stage"),
             connect_offered=bool(item.get("connect_offered", False)),
+            checkout_floor=int(item.get("checkout_floor", 0)),
             created_at=item.get("created_at", int(datetime.now().timestamp())),
             updated_at=item.get("updated_at", int(datetime.now().timestamp())),
             ttl=item.get("ttl"),
