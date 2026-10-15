@@ -192,3 +192,49 @@ def test_summary_text_contains_everything_the_match_needs():
     p = profile()
     text = p.summary()
     assert p.email in text and p.address["street_address"] in text
+
+
+# --- server-driven checkout sequence -----------------------------------
+
+from src.chatbot.services.checkout_details import (  # noqa: E402
+    STAGE_DETAILS, STAGE_POINTS, points_offer, should_force_complete_order, wants_checkout)
+
+
+@pytest.mark.parametrize("text", ["checkout", "Check out", "let's check out please", "complete_order",
+                                  "complete my order", "place order", "proceed to checkout", "buy now"])
+def test_checkout_phrases_are_recognized(text):
+    assert wants_checkout(text)
+
+
+@pytest.mark.parametrize("text", ["add roses", "show me tulips", "what's in my cart", "hello", "remove the roses"])
+def test_other_requests_are_not_checkout(text):
+    assert not wants_checkout(text)
+
+
+def test_checkout_request_forces_the_tool_only_when_there_is_a_cart():
+    assert should_force_complete_order("checkout", True, None)
+    assert not should_force_complete_order("checkout", False, None)
+
+
+def test_reply_to_our_question_forces_the_tool():
+    for stage in (STAGE_DETAILS, STAGE_POINTS):
+        assert should_force_complete_order("yes", True, stage)
+        assert should_force_complete_order("$5", True, stage)
+        assert should_force_complete_order("no, ship it to my office", True, stage)
+
+
+def test_unrelated_message_while_a_question_is_open_is_not_forced():
+    assert not should_force_complete_order("actually add some tulips", True, STAGE_DETAILS)
+    assert not should_force_complete_order("what's in my cart", True, STAGE_POINTS)
+    long_message = "I was thinking about this and " + "really " * 30 + "wondering"
+    assert not should_force_complete_order(long_message, True, STAGE_DETAILS)
+
+
+def test_no_open_question_and_no_checkout_intent_is_not_forced():
+    assert not should_force_complete_order("yes", True, None)
+
+
+def test_points_offer_text():
+    text = points_offer(50, "Petals")
+    assert "Petals" in text and "50%" in text and "$5" in text
+    assert "points" in text.lower()          # matched by points_question_answered

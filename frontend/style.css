@@ -370,3 +370,12 @@ body {
 .merchant-auth-link:active {
     transform: translateY(0);
 }
+
+/* Connect-to-merchant invitation shown under the first product list */
+.merchant-connect-invite p {
+    margin: 0 0 10px 0;
+}
+
+.merchant-connect-button {
+    margin-left: 0;
+}

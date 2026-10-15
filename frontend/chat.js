@@ -210,7 +210,7 @@ async function handleAuthenticated() {
             console.log('Handling merchant auth completion in handleAuthenticated');
             hideMerchantAuthPrompt();
             console.log('Merchant auth banner hidden');
-            addMessage('assistant', 'Merchant account connected successfully! You can now add items to your cart.');
+            addMessage('assistant', 'Merchant account connected. I can now see your loyalty points. Ask me to add something to your cart whenever you are ready.');
             merchantAuthJustCompleted = false;
         } else if (!chatMessages.querySelector('.message')) {
             // First login
@@ -442,6 +442,34 @@ async function initiateMerchantAuth() {
     }
 }
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+
+function addMerchantConnectInvite(promptText, authUrl) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant-message';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content merchant-connect-invite';
+
+    const explanation = document.createElement('p');
+    explanation.textContent = promptText;
+
+    const button = document.createElement('a');
+    button.className = 'merchant-auth-link merchant-connect-button';
+    button.href = authUrl;
+    button.textContent = 'Connect to merchant';
+
+    contentDiv.appendChild(explanation);
+    contentDiv.appendChild(button);
+    messageDiv.appendChild(contentDiv);
+    chatMessages.appendChild(messageDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
 function showMerchantAuthPrompt() {
     merchantAuthPrompt.style.display = 'block';
 }
@@ -609,10 +637,10 @@ async function sendMessage() {
             return;
         }
 
-        // Check if merchant authorization is required
-        if (data.merchant_auth_required && data.merchant_auth_url) {
-            // Display message with authorization link
-            const messageText = `${data.text} <a href="${data.merchant_auth_url}" class="merchant-auth-link">Click here to authorize</a>`;
+        // Merchant authorization needed to continue (e.g. cart or checkout was
+        // attempted). Nothing else to show: the reply explains why.
+        if (data.merchant_auth_required && data.merchant_auth_url && !data.merchant_auth_prompt) {
+            const messageText = `${escapeHtml(data.text)} <a href="${data.merchant_auth_url}" class="merchant-auth-link">Connect to merchant</a>`;
             addMessage('assistant', messageText, true); // true = allow HTML
             return;
         }
@@ -625,6 +653,12 @@ async function sendMessage() {
         // Display product results
         if (data.results && data.results.length > 0) {
             addProductCards(data.results);
+        }
+
+        // Invite the shopper to connect to the merchant, after the products so
+        // the list stays the first thing they see
+        if (data.merchant_auth_required && data.merchant_auth_url && data.merchant_auth_prompt) {
+            addMerchantConnectInvite(data.merchant_auth_prompt, data.merchant_auth_url);
         }
 
         // Update cart summary

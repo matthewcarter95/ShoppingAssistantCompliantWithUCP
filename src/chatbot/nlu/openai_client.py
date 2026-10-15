@@ -25,13 +25,15 @@ class NLUClient:
         self.client = AsyncOpenAI(api_key=self.api_key)
 
     async def chat(
-        self, messages: List[Dict[str, Any]]
+        self, messages: List[Dict[str, Any]], force_tool: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Send chat completion request with function calling.
 
         Args:
             messages: Conversation history in OpenAI format (can include tool_calls and tool responses)
+            force_tool: If set, the model must call this function (arguments are
+                still filled in by the model)
 
         Returns:
             Dictionary with 'message' (assistant response) and optional 'tool_calls'
@@ -78,7 +80,11 @@ class NLUClient:
                 model=self.model,
                 messages=formatted_messages,
                 tools=CHATBOT_TOOLS,
-                tool_choice="auto",
+                tool_choice=(
+                    {"type": "function", "function": {"name": force_tool}}
+                    if force_tool
+                    else "auto"
+                ),
             )
 
             choice = response.choices[0]

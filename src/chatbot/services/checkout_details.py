@@ -9,6 +9,7 @@ Two sources are acceptable, and nothing else:
 Anything the model supplies that matches neither is rejected, so it cannot
 invent or paraphrase order details.
 """
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -115,3 +116,50 @@ def resolve_checkout_details(
 
     # 5. Show the saved details and wait.
     return DetailsDecision(CONFIRM, message=confirmation_prompt(token_profile))
+
+
+STAGE_DETAILS = "details"
+STAGE_POINTS = "points"
+
+_CHECKOUT_INTENT = re.compile(
+    r"\b(check\s?out|complete[_ ]?(my |the |this )?order|place (my |the |this |an? )?order|"
+    r"buy (it )?now|pay now|proceed to (check\s?out|payment))\b",
+    re.IGNORECASE,
+)
+_OTHER_INTENT = re.compile(
+    r"\b(add|remove|delete|search|show|find|cancel|never\s?mind|stop|view|what)\b", re.IGNORECASE
+)
+
+
+def wants_checkout(message: str) -> bool:
+    """True if the shopper's message asks to check out."""
+    return bool(_CHECKOUT_INTENT.search(message or ""))
+
+
+def should_force_complete_order(message: str, has_checkout: bool, stage: Optional[str]) -> bool:
+    """
+    Whether the next model call must be `complete_order`.
+
+    Forced when the shopper asks to check out, and while a question we asked
+    (saved details, loyalty points) is waiting for their reply, unless the
+    reply is clearly about something else. This keeps the checkout sequence
+    under server control instead of depending on the model choosing the tool.
+    """
+    if not has_checkout:
+        return False
+    if wants_checkout(message):
+        return True
+    if stage in (STAGE_DETAILS, STAGE_POINTS):
+        # A reply to our question is short; a long message is a new request.
+        return len((message or "").split()) <= 25 and not _OTHER_INTENT.search(message or "")
+    return False
+
+
+def points_offer(max_redeem_percent: Optional[int], currency_name: Optional[str] = None) -> str:
+    """The question shown to loyalty members at every checkout."""
+    cap = f" They can cover up to {max_redeem_percent}% of the order." if max_redeem_percent else ""
+    name = f" ({currency_name})" if currency_name else ""
+    return (
+        f"You have loyalty points{name} with this merchant. Would you like to pay part of this "
+        f"order with them?{cap} Reply \"no\", \"as many as allowed\", or a dollar amount such as \"$5\"."
+    )

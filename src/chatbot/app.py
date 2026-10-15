@@ -21,8 +21,21 @@ from .services.catalog_service import CatalogService
 from .services.checkout_service import CheckoutService
 from .services.payment_service import PaymentService, PointsRequest
 from .services.buyer_input import dollars_to_cents, points_question_answered
-from .services.checkout_details import CONFIRM, READY, resolve_checkout_details
+from .services.checkout_details import (
+    CONFIRM,
+    READY,
+    STAGE_DETAILS,
+    STAGE_POINTS,
+    points_offer,
+    resolve_checkout_details,
+    should_force_complete_order,
+)
 from .services.buyer_claims import buyer_profile_from_token
+from .services.merchant_connect import (
+    CONNECT_PROMPT,
+    merchant_token_usable,
+    should_offer_connect,
+)
 from .utils.logger import setup_logger
 
 logger = setup_logger(__name__, settings.log_level)
@@ -203,6 +216,7 @@ async def chat(
         merchant_auth_url = None
         merchant_error: Optional[str] = None
         forced_reply: Optional[str] = None  # shown verbatim; ends the tool loop
+        merchant_auth_prompt: Optional[str] = None
 
         # Multi-turn tool calling loop (max 3 turns to prevent infinite loops)
         max_iterations = 3
@@ -213,8 +227,20 @@ async def chat(
             iteration += 1
             logger.info(f"Tool calling iteration {iteration}")
 
-            # Call OpenAI
-            nlu_response = await nlu_client.chat(messages)
+            # Call OpenAI. On the first call the checkout tool is forced when the
+            # shopper asked to check out or is answering a question we asked.
+            force = (
+                "complete_order"
+                if iteration == 1
+                and user
+                and should_force_complete_order(
+                    request.message, bool(state.checkout_id), state.checkout_stage
+                )
+                else None
+            )
+            if force:
+                logger.info(f"Forcing {force} (stage={state.checkout_stage})")
+            nlu_response = await nlu_client.chat(messages, force_tool=force)
             assistant_message = nlu_response.get("message", "")
 
             # If no tool calls, we're done
@@ -256,6 +282,23 @@ async def chat(
                             tool_result = f"Found {len(products)} products. Product IDs: {product_list}"
                         else:
                             tool_result = "No products found"
+
+                        # First product list of the session: invite the shopper to
+                        # connect their merchant account before they start a cart.
+                        from .auth.merchant_oauth import merchant_oauth_client
+
+                        if should_offer_connect(
+                            signed_in=bool(user),
+                            found_products=bool(products),
+                            token_usable=merchant_token_usable(
+                                state.merchant_auth, merchant_oauth_client.is_token_expired
+                            ),
+                            already_offered=state.connect_offered,
+                        ):
+                            merchant_auth_url = begin_merchant_authorization(state, request.session_id)
+                            merchant_auth_required = True
+                            merchant_auth_prompt = CONNECT_PROMPT
+                            state.connect_offered = True
 
                     elif tool_name == "add_to_cart":
                         # Require authentication for cart operations
@@ -460,6 +503,7 @@ async def chat(
                             )
                             if decision.kind == CONFIRM:
                                 forced_reply = decision.message
+                                state.checkout_stage = STAGE_DETAILS
                                 tool_result = "Waiting for the user to confirm their saved details."
                             elif decision.kind != READY:
                                 tool_result = decision.message
@@ -478,12 +522,15 @@ async def chat(
                                 is_member = bool(checkout_now.get("loyalty"))
                                 points = None
                                 if is_member and not points_question_answered(state.messages):
-                                    tool_result = (
-                                        "ERROR: Before placing the order, ask the user whether they "
-                                        "want to pay part of it with their loyalty points (at most "
-                                        "half the total). Wait for their answer, then call "
-                                        "complete_order again with use_points set."
+                                    profile = await ucp_client.get_profile()
+                                    handler = profile.handler_by_id("mock_loyalty_points") or {}
+                                    config = handler.get("config") or {}
+                                    forced_reply = points_offer(
+                                        config.get("max_redeem_percent"),
+                                        (config.get("currency") or {}).get("name"),
                                     )
+                                    state.checkout_stage = STAGE_POINTS
+                                    tool_result = "Waiting for the user to answer the loyalty points question."
                                 elif is_member and use_points is None:
                                     tool_result = (
                                         "ERROR: Set use_points to the user's answer: 'no', 'max' "
@@ -508,6 +555,7 @@ async def chat(
                                         address=shipping_address,
                                     )
                                     order = order_response.get("order", {})
+                                    state.checkout_stage = None
                                     tool_result = "Order completed successfully"
 
                 except UCPError as e:
@@ -569,6 +617,7 @@ async def chat(
             order=order,
             merchant_auth_required=merchant_auth_required,
             merchant_auth_url=merchant_auth_url,
+            merchant_auth_prompt=merchant_auth_prompt,
         )
 
     except Exception as e:

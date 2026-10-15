@@ -30,6 +30,9 @@ class ChatResponse(BaseModel):
     merchant_auth_url: Optional[str] = Field(
         None, description="Merchant authorization URL if auth is required"
     )
+    merchant_auth_prompt: Optional[str] = Field(
+        None, description="Explanation shown with the connect-to-merchant button"
+    )
 
 
 class SessionResponse(BaseModel):

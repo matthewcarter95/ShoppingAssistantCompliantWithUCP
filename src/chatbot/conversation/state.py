@@ -23,6 +23,13 @@ class ConversationState(BaseModel):
     merchant_auth: Optional[Dict[str, Any]] = None  # Merchant OAuth tokens
     messages: List[Message] = Field(default_factory=list)
     status: str = "init"  # init -> shopping -> ready_to_pay -> completed
+    # Where the checkout conversation stands, so the server (not the model)
+    # drives it: "details" = saved details shown, awaiting the shopper's reply;
+    # "points" = loyalty points offered, awaiting the shopper's reply.
+    checkout_stage: Optional[str] = None
+    # True once the shopper has been invited to connect their merchant account,
+    # so the invitation appears once per session.
+    connect_offered: bool = False
     created_at: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
     updated_at: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
     ttl: Optional[int] = None
@@ -44,6 +51,8 @@ class ConversationState(BaseModel):
             "merchant_auth": self.merchant_auth,
             "messages": [m.model_dump() for m in self.messages],
             "status": self.status,
+            "checkout_stage": self.checkout_stage,
+            "connect_offered": self.connect_offered,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "ttl": self.ttl,
@@ -62,6 +71,8 @@ class ConversationState(BaseModel):
             merchant_auth=item.get("merchant_auth"),
             messages=messages,
             status=item.get("status", "init"),
+            checkout_stage=item.get("checkout_stage"),
+            connect_offered=bool(item.get("connect_offered", False)),
             created_at=item.get("created_at", int(datetime.now().timestamp())),
             updated_at=item.get("updated_at", int(datetime.now().timestamp())),
             ttl=item.get("ttl"),
