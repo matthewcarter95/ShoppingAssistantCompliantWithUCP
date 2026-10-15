@@ -62,7 +62,7 @@ test('OAuth flow with manual merchant login', async ({ page }) => {
   await authLink.waitFor({ state: 'visible', timeout: 10000 });
   await authLink.click();
 
-  await page.waitForURL(/universal-commerce-merchant\.cic-demo-platform\.auth0app\.com/, { timeout: 15000 });
+  await page.waitForURL(/auth0connectedapps\.demo-connect\.us/, { timeout: 15000 });
   console.log('✅ Redirected to merchant Auth0');
 
   // PAUSE HERE FOR MANUAL LOGIN

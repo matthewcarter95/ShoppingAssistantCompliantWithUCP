@@ -29,9 +29,9 @@ We've improved the OAuth callback flow to be more reliable and follow standard O
 
 ### Update Allowed Callback URLs
 
-1. Go to merchant Auth0 dashboard: **universal-commerce-merchant.cic-demo-platform.auth0app.com**
+1. Go to merchant Auth0 dashboard: **auth0connectedapps.demo-connect.us**
 2. Navigate to: Applications → Applications
-3. Find: Shopping assistant app (Client ID: `C70smEFi7G1XQBO9KVeBN5adJWpfQeDo`)
+3. Find: Shopping assistant app (Client ID: `PX3u5zLgnC39WzYFnGU6Aval5V9xabGd`)
 4. Settings → Application URIs
 5. Update **Allowed Callback URLs** to:
    ```

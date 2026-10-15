@@ -249,8 +249,8 @@ The shopping assistant uses Auth0 for user authentication with JWT tokens.
 The shopping assistant uses OAuth Authorization Code + PKCE to obtain merchant access tokens for UCP checkout operations.
 
 **Configuration:**
-- **Domain**: universal-commerce-merchant.cic-demo-platform.auth0app.com
-- **Client ID**: C70smEFi7G1XQBO9KVeBN5adJWpfQeDo (shopping assistant's client ID)
+- **Domain**: auth0connectedapps.demo-connect.us
+- **Client ID**: PX3u5zLgnC39WzYFnGU6Aval5V9xabGd (shopping assistant's client ID)
 - **Audience**: api://ucp.session.service
 - **Scope**: openid profile email mock.ucp.shopping.checkout:manage mock.ucp.shopping.checkout:complete
 - **Redirect URI**: https://main.d7stwkdmkar4g.amplifyapp.com/auth/callback

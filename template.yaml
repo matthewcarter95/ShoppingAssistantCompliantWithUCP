@@ -66,8 +66,8 @@ Resources:
           # Shopping Assistant Auth0
           SHOPPING_ASSISTANT_AUTH0_DOMAIN: grocery-b2c.cic-demo-platform.auth0app.com
           # Merchant OAuth
-          MERCHANT_AUTH0_DOMAIN: universal-commerce-merchant.cic-demo-platform.auth0app.com
-          MERCHANT_AUTH0_CLIENT_ID: C70smEFi7G1XQBO9KVeBN5adJWpfQeDo
+          MERCHANT_AUTH0_DOMAIN: auth0connectedapps.demo-connect.us
+          MERCHANT_AUTH0_CLIENT_ID: PX3u5zLgnC39WzYFnGU6Aval5V9xabGd
           MERCHANT_AUTH0_AUDIENCE: api://ucp.session.service
           MERCHANT_AUTH0_SCOPE: "openid profile email mock.ucp.shopping.checkout:manage mock.ucp.shopping.checkout:complete"
           # Chatbot base URL (Lambda Function URL) - used for OAuth callback

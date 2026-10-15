@@ -13,7 +13,7 @@
 Merchant Auth0 error: "Wrong email or password"
 ```
 
-**Tenant**: universal-commerce-merchant.cic-demo-platform.auth0app.com
+**Tenant**: auth0connectedapps.demo-connect.us
 **User**: play.write@atko.email
 **Password**: Abcd!234
 
@@ -28,7 +28,7 @@ The error "Wrong email or password" (not "bot detection") means:
 ### Option 1: Verify User Exists in Merchant Auth0
 
 1. Go to merchant Auth0 dashboard:
-   - Tenant: **universal-commerce-merchant.cic-demo-platform.auth0app.com**
+   - Tenant: **auth0connectedapps.demo-connect.us**
 
 2. Navigate to: **User Management → Users**
 
@@ -58,7 +58,7 @@ If you want to use a different user that already exists in both Auth0 tenants:
 
 2. Make sure this user exists in BOTH:
    - grocery-b2c.cic-demo-platform.auth0app.com
-   - universal-commerce-merchant.cic-demo-platform.auth0app.com
+   - auth0connectedapps.demo-connect.us
 
 ### Option 3: Test Manually First
 

@@ -14,8 +14,8 @@ class Auth0Settings(BaseSettings):
 
     # Merchant OAuth Configuration (Authorization Code + PKCE)
     # Note: redirect_uri is now computed from chatbot_base_url in config.py
-    merchant_auth0_domain: str = "universal-commerce-merchant.cic-demo-platform.auth0app.com"
-    merchant_auth0_client_id: str = "C70smEFi7G1XQBO9KVeBN5adJWpfQeDo"
+    merchant_auth0_domain: str = "auth0connectedapps.demo-connect.us"
+    merchant_auth0_client_id: str = "PX3u5zLgnC39WzYFnGU6Aval5V9xabGd"
     merchant_auth0_audience: str = "api://ucp.session.service"
     merchant_auth0_scope: str = "openid profile email mock.ucp.shopping.checkout:manage mock.ucp.shopping.checkout:complete"
 
