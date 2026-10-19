@@ -380,3 +380,8 @@ body {
 .merchant-connect-button {
     margin-left: 0;
 }
+
+/* After connecting, the invitation stays in the chat history but loses its button */
+.merchant-connect-done {
+    opacity: 0.7;
+}

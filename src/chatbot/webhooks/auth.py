@@ -4,7 +4,7 @@ from typing import Dict, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ..auth.dependencies import get_current_user
@@ -12,6 +12,7 @@ from ..auth.merchant_oauth import merchant_oauth_client
 from ..conversation.manager import get_session_manager
 from ..utils.logger import setup_logger
 from ..config import settings
+from ..services.popup_page import render_callback_page
 
 logger = setup_logger(__name__, settings.log_level)
 
@@ -123,6 +124,14 @@ async def check_merchant_auth_status(
     )
 
 
+def _callback_page(success: bool, session_id: Optional[str] = None, error_code: Optional[str] = None) -> HTMLResponse:
+    """The OAuth callback response. Never cached: it is tied to a one-time code."""
+    return HTMLResponse(
+        render_callback_page(settings.frontend_url, success, session_id, error_code),
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
 @router.get("/callback")
 async def handle_oauth_callback(
     code: str,
@@ -133,8 +142,9 @@ async def handle_oauth_callback(
     Handle OAuth callback redirect from merchant authorization.
 
     This endpoint receives the authorization code from merchant Auth0,
-    exchanges it for tokens, stores them in the session, and redirects
-    back to the frontend.
+    exchanges it for tokens, stores them in the session, and returns a small
+    page that reports the outcome to the chat window that opened this popup
+    (and closes itself), or sends a plain tab back to the chat.
 
     Args:
         code: Authorization code from Auth0
@@ -142,7 +152,7 @@ async def handle_oauth_callback(
         request: FastAPI request object
 
     Returns:
-        RedirectResponse back to frontend with success indicator
+        HTMLResponse: the popup result page
 
     Note: This is a GET endpoint because OAuth callbacks are browser redirects.
     It doesn't require shopping assistant authentication because:
@@ -159,10 +169,7 @@ async def handle_oauth_callback(
     except ValueError as e:
         logger.error(f"Invalid state parameter: {str(e)}")
         # Redirect to frontend with error
-        return RedirectResponse(
-            url=f"{settings.frontend_url}?error=invalid_state&message={str(e)}",
-            status_code=302
-        )
+        return _callback_page(success=False, error_code="invalid_state")
 
     # Load session by session_id (without requiring user_id)
     manager = get_session_manager()
@@ -171,10 +178,7 @@ async def handle_oauth_callback(
 
     if not session_state:
         logger.error(f"Session not found for session_id: {session_id}")
-        return RedirectResponse(
-            url=f"{settings.frontend_url}?error=session_not_found",
-            status_code=302
-        )
+        return _callback_page(success=False, error_code="session_not_found")
 
     logger.info(f"Session found - user_id: {session_state.user_id}")
 
@@ -185,10 +189,7 @@ async def handle_oauth_callback(
         logger.info("Code verifier found in session")
     else:
         logger.error("Code verifier not found in session")
-        return RedirectResponse(
-            url=f"{settings.frontend_url}?error=missing_code_verifier",
-            status_code=302
-        )
+        return _callback_page(success=False, error_code="missing_code_verifier")
 
     # Exchange authorization code for tokens
     try:
@@ -200,10 +201,7 @@ async def handle_oauth_callback(
         logger.info("Successfully exchanged code for tokens")
     except Exception as e:
         logger.error(f"Failed to exchange authorization code: {str(e)}")
-        return RedirectResponse(
-            url=f"{settings.frontend_url}?error=token_exchange_failed&message={str(e)}",
-            status_code=302
-        )
+        return _callback_page(success=False, error_code="token_exchange_failed")
 
     # Store tokens in session
     logger.info(f"Storing merchant auth tokens for session {session_id}")
@@ -228,11 +226,8 @@ async def handle_oauth_callback(
     manager.update_session(session_state)
     logger.info(f"Session {session_id} updated successfully with merchant auth")
 
-    # Redirect back to frontend with success indicator
-    return RedirectResponse(
-        url=f"{settings.frontend_url}?merchant_auth=success&session_id={session_id}",
-        status_code=302
-    )
+    # Tell the chat window (this runs in its popup) and close
+    return _callback_page(success=True, session_id=session_id)
 
 
 @router.post("/create", response_model=OAuthCreateResponse)
@@ -254,7 +249,7 @@ async def create_merchant_authorization(
     """
     # Verify session exists and belongs to user
     manager = get_session_manager()
-    session_state = await manager.load_session(session_id)
+    session_state = manager.get_session(user["email"], session_id)
 
     if not session_state:
         raise HTTPException(
@@ -273,6 +268,14 @@ async def create_merchant_authorization(
 
     # Generate state
     state = merchant_oauth_client.generate_state(session_id, request.intent)
+
+    # The callback reads the verifier from the session (it runs in a popup with
+    # no access to this page's sessionStorage), so park it there
+    if not session_state.merchant_auth:
+        session_state.merchant_auth = {}
+    session_state.merchant_auth["pending_code_verifier"] = code_verifier
+    session_state.merchant_auth["pending_state"] = state
+    manager.update_session(session_state)
 
     # Build authorization URL
     authorization_url = merchant_oauth_client.build_authorization_url(

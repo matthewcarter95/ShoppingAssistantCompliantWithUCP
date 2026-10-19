@@ -15,6 +15,8 @@ let accessToken = null;
 let sessionId = null;
 let merchantAuthInitiated = false;
 let merchantAuthJustCompleted = false;
+let merchantPopup = null;          // the sign-in popup window, while it is open
+let merchantPopupWatcher = null;   // interval that notices the popup being closed
 
 // ===== DOM Elements =====
 const chatContainer = document.getElementById('chatContainer');
@@ -393,14 +395,115 @@ async function checkMerchantAuth() {
     }
 }
 
-async function initiateMerchantAuth() {
+// Open a blank popup for the merchant sign-in. Must run synchronously inside a
+// click, or browsers block it; the sign-in address is filled in afterwards.
+// Returns the window, or null if the browser blocked it.
+function openMerchantPopup() {
+    if (merchantPopup && !merchantPopup.closed) {
+        merchantPopup.focus();
+        return merchantPopup;
+    }
+    merchantPopup = window.open('about:blank', MerchantPopup.WINDOW_NAME, MerchantPopup.popupFeatures(window));
+    if (!merchantPopup) return null;
+    merchantAuthInitiated = true;
+    watchMerchantPopup();
+    return merchantPopup;
+}
+
+// Ask the server whether the merchant account is connected for this session
+async function merchantIsAuthorized() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/webhooks/auth/status?session_id=${sessionId}`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!response.ok) return false;
+        return (await response.json()).authorized === true;
+    } catch (error) {
+        return false;
+    }
+}
+
+// When the popup closes without having told us the result, the server is the
+// source of truth: the sign-in may have worked and only the message been lost
+// (some identity providers cut the link between popup and opener).
+function watchMerchantPopup() {
+    clearInterval(merchantPopupWatcher);
+    merchantPopupWatcher = setInterval(async () => {
+        if (!merchantPopup || !merchantPopup.closed) return;
+        clearInterval(merchantPopupWatcher);
+        merchantPopup = null;
+        if (!merchantAuthInitiated) return;
+        merchantAuthInitiated = false;
+        if (await merchantIsAuthorized()) {
+            await onMerchantConnected();
+        } else {
+            addMessage('assistant', 'The merchant sign-in window was closed before it finished. Say the word and I will open it again.');
+        }
+    }, 600);
+}
+
+// The popup reports how it went. Only our own popup, from the API's origin, counts.
+window.addEventListener('message', async (event) => {
+    const result = MerchantPopup.interpretMessage(event, {
+        origin: MerchantPopup.senderOrigin(API_BASE_URL),
+        source: merchantPopup,
+        sessionId: sessionId
+    });
+    if (!result) return;
+
+    clearInterval(merchantPopupWatcher);
+    merchantPopup = null;
+    merchantAuthInitiated = false;
+
+    if (!result.ok) {
+        addMessage('assistant', MerchantPopup.errorText(result.error));
+        return;
+    }
+    await onMerchantConnected();
+});
+
+// Merchant connected: carry on in this same page, with the chat as it was
+async function onMerchantConnected() {
+    // Keep the "just connected" window the status check relies on, and remember it
+    sessionStorage.setItem('merchantAuthCompletedAt', Date.now().toString());
+    localStorage.setItem('merchantAuthCompleted', 'true');
+    hideMerchantAuthPrompt();
+
+    // The invitation buttons already in the chat are now stale; retire them
+    document.querySelectorAll('.merchant-connect-invite').forEach((el) => {
+        el.classList.add('merchant-connect-done');
+        const link = el.querySelector('.merchant-connect-button');
+        if (link) link.remove();
+    });
+
+    addMessage('assistant', 'Merchant account connected. I can now see your loyalty points. Ask me to add something to your cart whenever you are ready.');
+    messageInput.focus();
+}
+
+// Start the merchant sign-in in a popup. Always asks the server for a fresh
+// sign-in link: links embedded in older chat messages carry a PKCE verifier
+// that a newer link may since have replaced.
+// `fallbackUrl` (optional) is used as a full-page redirect if popups are blocked.
+async function initiateMerchantAuth(fallbackUrl) {
     if (merchantAuthInitiated) {
         console.log('Merchant auth already initiated, skipping');
+        if (merchantPopup && !merchantPopup.closed) merchantPopup.focus();
+        return;
+    }
+
+    // Open the popup right now, inside the click, then fill in its address
+    const popup = openMerchantPopup();
+    if (!popup) {
+        if (typeof fallbackUrl === 'string' && fallbackUrl) {
+            console.warn('Popup blocked, falling back to a full-page redirect');
+            window.location.href = fallbackUrl;
+            return;
+        }
+        addMessage('assistant', 'Your browser blocked the sign-in window. Please allow popups for this site and try again.');
         return;
     }
 
     console.log(`Initiating merchant auth for session: ${sessionId}`);
-    merchantAuthInitiated = true;
 
     try {
         const response = await fetch(
@@ -428,15 +531,15 @@ async function initiateMerchantAuth() {
         const data = await response.json();
         console.log('Merchant auth created successfully, redirecting to authorization URL');
 
-        // Store code_verifier in sessionStorage
-        sessionStorage.setItem('merchant_code_verifier', data.code_verifier);
-        sessionStorage.setItem('merchant_state', data.state);
-
-        // Redirect to authorization URL
-        window.location.href = data.authorization_url;
+        // The server keeps the PKCE verifier with the session, because the
+        // popup that handles the callback cannot read this page's storage
+        popup.location.href = data.authorization_url;
 
     } catch (error) {
         console.error('Error initiating merchant auth:', error);
+        try { popup.close(); } catch (e) { /* already gone */ }
+        clearInterval(merchantPopupWatcher);
+        merchantPopup = null;
         addMessage('assistant', 'Failed to initiate merchant authorization. Please try again.');
         merchantAuthInitiated = false;
     }
@@ -460,8 +563,13 @@ function addMerchantConnectInvite(promptText, authUrl) {
 
     const button = document.createElement('a');
     button.className = 'merchant-auth-link merchant-connect-button';
-    button.href = authUrl;
+    button.href = authUrl;   // still a real link: middle-click or a blocked popup falls back to it
     button.textContent = 'Connect to merchant';
+    button.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        initiateMerchantAuth(authUrl);
+    });
 
     contentDiv.appendChild(explanation);
     contentDiv.appendChild(button);
@@ -684,10 +792,18 @@ async function sendMessage() {
 }
 
 // ===== Event Listeners =====
+// "Connect to merchant" links that arrive as HTML inside a chat message
+chatMessages.addEventListener('click', (e) => {
+    const link = e.target.closest && e.target.closest('a.merchant-auth-link:not(.merchant-connect-button)');
+    if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    initiateMerchantAuth(link.href);
+});
+
 loginButton.addEventListener('click', login);
 loginPromptButton.addEventListener('click', login);
 logoutButton.addEventListener('click', logout);
-connectMerchantButton.addEventListener('click', initiateMerchantAuth);
+connectMerchantButton.addEventListener('click', () => initiateMerchantAuth());
 
 sendButton.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => {
