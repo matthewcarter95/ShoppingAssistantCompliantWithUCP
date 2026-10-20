@@ -55,6 +55,18 @@ class Settings(BaseSettings):
     # Chatbot base URL (Lambda Function URL)
     chatbot_base_url: str = "https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws"
 
+    # PACT personal-agent identity (https://openpactprotocol.org). Off until a key is configured.
+    # Issuer defaults to the Lambda Function URL (chatbot_base_url); the Provider matches `iss`
+    # as an exact string, so changing it means re-registering with every Provider.
+    pact_issuer: str = ""
+    # SSM SecureString holding the private ES256 JWK (see scripts/gen_pact_key.py).
+    pact_key_ssm_parameter: str = ""
+    # SSM SecureString holding the secret that derives opaque per-user `sub` values.
+    pact_sub_secret_ssm_parameter: str = ""
+    # Local development only: take the values directly instead of from SSM.
+    pact_private_jwk: str = ""
+    pact_sub_secret: str = ""
+
     # Frontend URL for CORS and post-OAuth redirects
     frontend_url: str = "https://main.d7stwkdmkar4g.amplifyapp.com"
 
@@ -62,6 +74,10 @@ class Settings(BaseSettings):
     def merchant_auth0_redirect_uri(self) -> str:
         """Merchant OAuth redirect URI - points to our backend callback endpoint."""
         return f"{self.chatbot_base_url}/webhooks/auth/callback"
+
+    @property
+    def pact_issuer_url(self) -> str:
+        return (self.pact_issuer or self.chatbot_base_url).rstrip("/")
 
 
 # Singleton settings instance

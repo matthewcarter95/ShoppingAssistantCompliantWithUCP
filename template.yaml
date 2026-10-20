@@ -19,6 +19,12 @@ Parameters:
     Description: Frontend Amplify URL for CORS
     Default: https://main.d7stwkdmkar4g.amplifyapp.com
 
+  PactSsmPrefix:
+    Type: String
+    Description: SSM parameter prefix holding the PACT signing key and sub secret (must start with /)
+    Default: /shopping-assistant/pact
+    AllowedPattern: "^/[A-Za-z0-9_./-]+[^/]$"
+
 Resources:
   # DynamoDB Table for conversation sessions
   ConversationSessionsTable:
@@ -74,9 +80,21 @@ Resources:
           CHATBOT_BASE_URL: https://gscfl7ajbg3tudkoygerso7grq0epohi.lambda-url.us-east-1.on.aws
           # Frontend URL for CORS and post-OAuth redirects
           FRONTEND_URL: !Ref FrontendUrl
+          # PACT personal-agent identity. Issuer is CHATBOT_BASE_URL (the Function URL).
+          # Both values are SSM SecureStrings created by scripts/gen_pact_key.py --store.
+          PACT_KEY_SSM_PARAMETER: !Sub "${PactSsmPrefix}/private-jwk"
+          PACT_SUB_SECRET_SSM_PARAMETER: !Sub "${PactSsmPrefix}/sub-secret"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationSessionsTable
+        # Read only the two PACT parameters. SecureStrings under the default aws/ssm key
+        # decrypt with the caller's SSM access; no separate kms:Decrypt grant is needed.
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${PactSsmPrefix}/private-jwk"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${PactSsmPrefix}/sub-secret"
       FunctionUrlConfig:
         AuthType: NONE
         Cors:

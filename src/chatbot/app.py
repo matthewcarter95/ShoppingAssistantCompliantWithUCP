@@ -15,6 +15,7 @@ from .models import (
 )
 from .auth.dependencies import get_current_user, get_current_user_optional
 from .webhooks import auth_router
+from .pact.routes import router as pact_router
 from .ucp.client import UCPClient, UCPError
 from .nlu.openai_client import NLUClient
 from .services.catalog_service import CatalogService
@@ -80,6 +81,7 @@ payment_service = PaymentService(ucp_client)
 
 # Include webhook routers
 app.include_router(auth_router)
+app.include_router(pact_router)
 
 
 def begin_merchant_authorization(state, session_id: str) -> str:
