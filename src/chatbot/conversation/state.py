@@ -21,6 +21,9 @@ class ConversationState(BaseModel):
     line_items: List[Dict[str, Any]] = Field(default_factory=list)
     buyer_info: Optional[Dict[str, Any]] = None
     merchant_auth: Optional[Dict[str, Any]] = None  # Merchant OAuth tokens
+    # check_orders: {"context_id", "token": {...}, "pending": {...}, "receipts": [...]}.
+    # Numbers are ints (DynamoDB rejects floats).
+    pact: Optional[Dict[str, Any]] = None
     messages: List[Message] = Field(default_factory=list)
     status: str = "init"  # init -> shopping -> ready_to_pay -> completed
     # Where the checkout conversation stands, so the server (not the model)
@@ -53,6 +56,7 @@ class ConversationState(BaseModel):
             "line_items": self.line_items,
             "buyer_info": self.buyer_info,
             "merchant_auth": self.merchant_auth,
+            "pact": self.pact,
             "messages": [m.model_dump() for m in self.messages],
             "status": self.status,
             "checkout_stage": self.checkout_stage,
@@ -74,6 +78,7 @@ class ConversationState(BaseModel):
             line_items=item.get("line_items", []),
             buyer_info=item.get("buyer_info"),
             merchant_auth=item.get("merchant_auth"),
+            pact=item.get("pact"),
             messages=messages,
             status=item.get("status", "init"),
             checkout_stage=item.get("checkout_stage"),

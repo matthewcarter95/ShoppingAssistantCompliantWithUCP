@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     pact_private_jwk: str = ""
     pact_sub_secret: str = ""
 
+    # check_orders: the merchant agent's Agent Card (spec §2.1) and the audience its Provider assigned
+    # to this assistant at registration. Leave the card URL empty to turn the tool off.
+    pact_brand_card_url: str = ""
+    pact_audience: str = ""
+
     # Frontend URL for CORS and post-OAuth redirects
     frontend_url: str = "https://main.d7stwkdmkar4g.amplifyapp.com"
 
@@ -74,6 +79,12 @@ class Settings(BaseSettings):
     def merchant_auth0_redirect_uri(self) -> str:
         """Merchant OAuth redirect URI - points to our backend callback endpoint."""
         return f"{self.chatbot_base_url}/webhooks/auth/callback"
+
+    @property
+    def pact_orders_enabled(self) -> bool:
+        """The tool needs somewhere to ask and a key to sign with."""
+        return bool(self.pact_brand_card_url and self.pact_audience
+                    and (self.pact_private_jwk or self.pact_key_ssm_parameter))
 
     @property
     def pact_issuer_url(self) -> str:

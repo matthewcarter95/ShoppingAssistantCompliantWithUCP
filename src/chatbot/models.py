@@ -33,6 +33,21 @@ class ChatResponse(BaseModel):
     merchant_auth_prompt: Optional[str] = Field(
         None, description="Explanation shown with the connect-to-merchant button"
     )
+    pact_auth_required: bool = Field(
+        False, description="The merchant's agent needs the shopper's approval before it can answer"
+    )
+    pact_auth_url: Optional[str] = Field(
+        None, description="https link to the merchant's own sign-in and consent, opened in a popup"
+    )
+
+
+class PactResumeResponse(BaseModel):
+    """Result of checking whether the shopper has approved access at the merchant."""
+
+    status: str = Field(..., description="reply | pending | step_up | denied | expired | error | none")
+    text: str = ""
+    interval: int = 5
+    auth_url: Optional[str] = None
 
 
 class SessionResponse(BaseModel):

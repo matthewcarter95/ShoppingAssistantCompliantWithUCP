@@ -381,6 +381,21 @@ body {
     margin-left: 0;
 }
 
+/* Approval for the merchant's order lookup; the assistant's explanation sits above it */
+.pact-approval {
+    padding: 4px 0;
+}
+
+.pact-approval-button {
+    margin-left: 0;
+    cursor: pointer;
+}
+
+.pact-approval-button:not([href]) {
+    cursor: default;
+    opacity: 0.7;
+}
+
 /* After connecting, the invitation stays in the chat history but loses its button */
 .merchant-connect-done {
     opacity: 0.7;

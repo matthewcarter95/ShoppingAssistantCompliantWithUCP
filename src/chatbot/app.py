@@ -12,6 +12,7 @@ from .models import (
     SessionResponse,
     NewSessionRequest,
     NewSessionResponse,
+    PactResumeResponse,
 )
 from .auth.dependencies import get_current_user, get_current_user_optional
 from .webhooks import auth_router
@@ -44,6 +45,7 @@ from .services.merchant_connect import (
     merchant_token_usable,
     should_offer_connect,
 )
+from .services.pact_orders import GENERIC_ERROR, ORDERS_SHOWN, get_pact_orders
 from .utils.logger import setup_logger
 
 logger = setup_logger(__name__, settings.log_level)
@@ -227,6 +229,12 @@ async def chat(
         forced_reply: Optional[str] = None  # shown verbatim; ends the tool loop
         order_completed = False
         merchant_auth_prompt: Optional[str] = None
+        pact_auth_url: Optional[str] = None
+        # What goes into chat history in place of text that came from the merchant's agent.
+        # The model reads history on later turns, so the merchant's words must not be in it.
+        history_text: Optional[str] = None
+        pact = get_pact_orders()
+        pact_on = bool(user) and pact.enabled
 
         # Multi-turn tool calling loop (max 3 turns to prevent infinite loops)
         max_iterations = 3
@@ -250,7 +258,7 @@ async def chat(
             )
             if force:
                 logger.info(f"Forcing {force} (stage={state.checkout_stage})")
-            nlu_response = await nlu_client.chat(messages, force_tool=force)
+            nlu_response = await nlu_client.chat(messages, force_tool=force, check_orders=pact_on)
             assistant_message = nlu_response.get("message", "")
 
             # If no tool calls, we're done
@@ -493,6 +501,24 @@ async def chat(
                                 )
                                 tool_result = f"Applied discount code: {code}"
 
+                    elif tool_name == "check_orders":
+                        if not pact_on:
+                            tool_result = "ERROR: Order lookup needs a signed-in shopper." if not user else "ERROR: Order lookup is not available."
+                        else:
+                            asked = await pact.ask(state, user["sub"], str(arguments.get("question") or request.message))
+                            if asked.kind == "reply":
+                                # The merchant's words go to the shopper; the model only learns that it happened.
+                                forced_reply = asked.text
+                                history_text = ORDERS_SHOWN
+                                tool_result = ORDERS_SHOWN
+                            elif asked.kind == "step_up":
+                                pact_auth_url = asked.auth_url
+                                forced_reply = asked.text  # our own wording, not the merchant's
+                                tool_result = "Waiting for the shopper to approve access at the merchant."
+                            else:
+                                forced_reply = asked.text or GENERIC_ERROR
+                                tool_result = "The order lookup did not complete."
+
                     elif tool_name == "complete_order":
                         if not user:
                             tool_result = "ERROR: You must login to complete orders. Please login to continue."
@@ -652,7 +678,7 @@ async def chat(
 
         # Add final assistant message to history
         if assistant_message:
-            state.add_message("assistant", assistant_message)
+            state.add_message("assistant", history_text or assistant_message)
 
         # The next order in this session starts a fresh set of checkout questions
         if order_completed:
@@ -675,11 +701,33 @@ async def chat(
             merchant_auth_required=merchant_auth_required,
             merchant_auth_url=merchant_auth_url,
             merchant_auth_prompt=merchant_auth_prompt,
+            pact_auth_required=pact_auth_url is not None,
+            pact_auth_url=pact_auth_url,
         )
 
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/pact/orders/resume", response_model=PactResumeResponse)
+async def resume_pact_orders(session_id: str, user: Dict = Depends(get_current_user)):
+    """The page polls this while the shopper approves access in the popup (one poll per call)."""
+    pact = get_pact_orders()
+    state = conversation_manager.get_session(user["email"], session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not pact.enabled or not (state.pact or {}).get("pending"):
+        return PactResumeResponse(status="none")
+
+    outcome = await pact.resume(state, user["sub"])
+    if outcome.kind == "reply":
+        state.add_message("assistant", ORDERS_SHOWN)  # history gets the marker, not the merchant's text
+    conversation_manager.update_session(state)
+    return PactResumeResponse(
+        status="reply" if outcome.kind == "reply" else outcome.kind,
+        text=outcome.text, interval=outcome.interval, auth_url=outcome.auth_url,
+    )
 
 
 @app.on_event("shutdown")

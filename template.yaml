@@ -19,6 +19,17 @@ Parameters:
     Description: Frontend Amplify URL for CORS
     Default: https://main.d7stwkdmkar4g.amplifyapp.com
 
+  PactBrandCardUrl:
+    Type: String
+    Default: ""
+    Description: >
+      The merchant agent's Agent Card URL (e.g. https://smitty-api.demo-connect.us/.well-known/agent-card.json).
+      Empty turns the check_orders tool off.
+  PactAudience:
+    Type: String
+    Default: ""
+    Description: The audience the merchant's Provider assigned to this assistant at registration (e.g. https://smitty-api.demo-connect.us/a2a).
+
   PactSsmPrefix:
     Type: String
     Description: SSM parameter prefix holding the PACT signing key and sub secret (must start with /)
@@ -82,6 +93,8 @@ Resources:
           FRONTEND_URL: !Ref FrontendUrl
           # PACT personal-agent identity. Issuer is CHATBOT_BASE_URL (the Function URL).
           # Both values are SSM SecureStrings created by scripts/gen_pact_key.py --store.
+          PACT_BRAND_CARD_URL: !Ref PactBrandCardUrl
+          PACT_AUDIENCE: !Ref PactAudience
           PACT_KEY_SSM_PARAMETER: !Sub "${PactSsmPrefix}/private-jwk"
           PACT_SUB_SECRET_SSM_PARAMETER: !Sub "${PactSsmPrefix}/sub-secret"
       Policies:

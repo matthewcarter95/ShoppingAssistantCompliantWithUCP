@@ -17,6 +17,10 @@ let merchantAuthInitiated = false;
 let merchantAuthJustCompleted = false;
 let merchantPopup = null;          // the sign-in popup window, while it is open
 let merchantPopupWatcher = null;   // interval that notices the popup being closed
+let pactPopup = null;              // the merchant's "allow access to your orders" window
+let pactPoll = null;               // timer that asks our server whether the shopper has approved
+let pactWatcher = null;            // notices the shopper closing that window
+let pactWaitingSince = 0;
 
 // ===== DOM Elements =====
 const chatContainer = document.getElementById('chatContainer');
@@ -578,6 +582,125 @@ function addMerchantConnectInvite(promptText, authUrl) {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+// ===== Merchant order lookup: approval =====
+// The merchant's agent will not show order details until the shopper approves access on the
+// merchant's own site. We open that page in a popup (we never see the sign-in), then ask our
+// server every few seconds whether it has been approved. The answer arrives as a chat message.
+function addPactApproval(authUrl) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant-message';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content pact-approval';
+
+    const button = document.createElement('a');
+    button.className = 'merchant-auth-link pact-approval-button';
+    button.textContent = 'Review and approve';
+    button.rel = 'noopener';
+    button.target = '_blank';
+    if (PactOrders.isSafeAuthUrl(authUrl)) {
+        button.href = authUrl;   // still a real link: middle-click or a blocked popup falls back to it
+        button.addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+            e.preventDefault();
+            openPactApproval(authUrl, button);
+        });
+    } else {
+        button.removeAttribute('href');
+        button.textContent = 'Approval link unavailable';
+    }
+
+    contentDiv.appendChild(button);
+    messageDiv.appendChild(contentDiv);
+    chatMessages.appendChild(messageDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function stopPactPolling() {
+    clearTimeout(pactPoll);
+    clearInterval(pactWatcher);
+    pactPoll = null;
+    pactWatcher = null;
+}
+
+function retirePactButtons() {
+    document.querySelectorAll('.pact-approval-button').forEach((el) => el.remove());
+}
+
+function openPactApproval(authUrl, button) {
+    if (!PactOrders.isSafeAuthUrl(authUrl)) return;
+    // Open inside the click so the browser allows it, to the merchant's own page
+    const popup = window.open(authUrl, PactOrders.WINDOW_NAME, MerchantPopup.popupFeatures(window));
+    if (!popup) {
+        addMessage('assistant', 'Your browser blocked the approval window. Please allow popups for this site, then use the button again.');
+        return;
+    }
+    pactPopup = popup;
+    pactWaitingSince = Date.now();
+    button.textContent = 'Waiting for your approval…';
+    button.removeAttribute('href');
+    startPactPolling();
+}
+
+function startPactPolling(delayMs) {
+    stopPactPolling();
+    // If the shopper closes the window, check once more: they may have approved just before closing.
+    pactWatcher = setInterval(() => {
+        if (pactPopup && pactPopup.closed) {
+            clearInterval(pactWatcher);
+            pactWatcher = null;
+            pactPopup = null;
+            pollPactOnce(true);
+        }
+    }, 700);
+    pactPoll = setTimeout(() => pollPactOnce(false), delayMs || 4000);
+}
+
+async function pollPactOnce(lastChance) {
+    if (!sessionId || !accessToken) { stopPactPolling(); return; }
+    if (!PactOrders.withinWindow(pactWaitingSince, Date.now())) {
+        stopPactPolling();
+        retirePactButtons();
+        addMessage('assistant', 'The approval request timed out. Ask me again and I will start a new one.');
+        return;
+    }
+    let result;
+    try {
+        const response = await fetch(`${API_BASE_URL}/pact/orders/resume?session_id=${encodeURIComponent(sessionId)}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        result = await response.json();
+    } catch (error) {
+        console.error('Checking on the approval failed:', error);
+        if (lastChance) { retirePactButtons(); addMessage('assistant', 'I could not check on your approval. Please ask again.'); return; }
+        pactPoll = setTimeout(() => pollPactOnce(false), PactOrders.nextDelayMs(5));   // a blip: try again
+        return;
+    }
+
+    const next = PactOrders.interpretResume(result);
+    if (next.keep) {
+        // If the window was closed without approval there is nothing more to wait for
+        if (lastChance) {
+            stopPactPolling();
+            retirePactButtons();
+            addMessage('assistant', 'The approval window was closed before it finished. Ask me again and I will reopen it.');
+            return;
+        }
+        pactPoll = setTimeout(() => pollPactOnce(false), next.delayMs);
+        return;
+    }
+
+    stopPactPolling();
+    retirePactButtons();
+    if (pactPopup && !pactPopup.closed) { try { pactPopup.close(); } catch (e) { /* already gone */ } }
+    pactPopup = null;
+    if (next.say) addMessage('assistant', next.say);
+    if (next.again && next.authUrl) addPactApproval(next.authUrl);
+    messageInput.focus();
+}
+
 function showMerchantAuthPrompt() {
     merchantAuthPrompt.style.display = 'block';
 }
@@ -742,6 +865,14 @@ async function sendMessage() {
         if (data.text && data.text.includes('ERROR: You must login')) {
             addMessage('assistant', 'To add items to your cart, please login first.');
             showLoginPrompt();
+            return;
+        }
+
+        // The merchant's own agent needs the shopper's approval to look up their orders.
+        // Our server has already explained why in data.text.
+        if (data.pact_auth_required && data.pact_auth_url) {
+            if (data.text) addMessage('assistant', data.text);
+            addPactApproval(data.pact_auth_url);
             return;
         }
 

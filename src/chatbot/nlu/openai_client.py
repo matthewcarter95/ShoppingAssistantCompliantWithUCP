@@ -4,7 +4,7 @@ from openai import AsyncOpenAI
 
 from ..config import settings
 from ..utils.logger import setup_logger
-from .tools import CHATBOT_TOOLS, SYSTEM_PROMPT
+from .tools import SYSTEM_PROMPT, tools_for
 
 logger = setup_logger(__name__, settings.log_level)
 
@@ -25,7 +25,7 @@ class NLUClient:
         self.client = AsyncOpenAI(api_key=self.api_key)
 
     async def chat(
-        self, messages: List[Dict[str, Any]], force_tool: Optional[str] = None
+        self, messages: List[Dict[str, Any]], force_tool: Optional[str] = None, check_orders: bool = False
     ) -> Dict[str, Any]:
         """
         Send chat completion request with function calling.
@@ -34,6 +34,7 @@ class NLUClient:
             messages: Conversation history in OpenAI format (can include tool_calls and tool responses)
             force_tool: If set, the model must call this function (arguments are
                 still filled in by the model)
+            check_orders: Offer the check_orders function (merchant agent configured)
 
         Returns:
             Dictionary with 'message' (assistant response) and optional 'tool_calls'
@@ -79,7 +80,7 @@ class NLUClient:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=formatted_messages,
-                tools=CHATBOT_TOOLS,
+                tools=tools_for(check_orders),
                 tool_choice=(
                     {"type": "function", "function": {"name": force_tool}}
                     if force_tool

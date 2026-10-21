@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 
 SYSTEM_PROMPT = """You are a helpful shopping assistant. Help users find products and complete purchases.
 
-Available functions: search_products, add_to_cart, update_cart_quantity, remove_from_cart, view_cart, apply_discount_code, complete_order.
+Available functions: search_products, add_to_cart, update_cart_quantity, remove_from_cart, view_cart, apply_discount_code, complete_order, and check_orders when it is offered.
 
 CRITICAL: UNDERSTAND USER INTENT
 - "show me X" / "what X do you have" = ONLY search, DO NOT add to cart
@@ -56,6 +56,12 @@ FUNCTION USAGE RULES:
    - If a function returns an error, tell the user what it says. Do not retry the
      same call and do not say the order went through.
 
+8. check_orders - The shopper asks about orders they ALREADY placed
+   - Examples: "where is my order", "what did I order last week", "has my package shipped"
+   - Pass their question in `question`. The merchant answers it directly; the answer is shown to
+     the shopper by the system, so do not repeat or summarise it, and do not guess at order details.
+   - NOT for the current cart (use view_cart), and NOT for buying anything.
+
 IMPORTANT:
 - Product IDs come from search_products results. Never guess an ID; search first.
 - NEVER add to cart unless user explicitly asks to add/buy/take
@@ -63,6 +69,28 @@ IMPORTANT:
 
 Be conversational and friendly.
 """
+
+CHECK_ORDERS_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "check_orders",
+        "description": "Ask the merchant about orders the shopper has already placed (status, contents, totals). "
+                       "The merchant may first ask the shopper to approve access; that is handled for you.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The shopper's question about their orders, in their own words"},
+            },
+            "required": ["question"],
+        },
+    },
+}
+
+
+def tools_for(check_orders: bool) -> List[Dict[str, Any]]:
+    """CHATBOT_TOOLS, plus check_orders when the merchant agent is configured."""
+    return CHATBOT_TOOLS + [CHECK_ORDERS_TOOL] if check_orders else CHATBOT_TOOLS
+
 
 CHATBOT_TOOLS: List[Dict[str, Any]] = [
     {
