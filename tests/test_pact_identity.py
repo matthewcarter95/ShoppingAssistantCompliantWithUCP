@@ -284,3 +284,73 @@ class TestSendMessage:
         with pytest.raises(PactError) as err:
             await client_with(lambda r: httpx.Response(200, json=task)).send_message("my orders")
         assert err.value.reason == "UNSUPPORTED_RESPONSE"
+
+
+class TestClientMetadataDocument:
+    """CIMD: the assistant described as an OAuth client, served at the URL that is its client_id."""
+
+    @pytest.fixture
+    def web(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        monkeypatch.chdir(tmp_path)
+        from src.chatbot.app import app
+        return TestClient(app)
+
+    def on(self, monkeypatch):
+        monkeypatch.setattr(settings, "pact_private_jwk", _private_jwk())
+        monkeypatch.setattr(pact_keys, "_cached_key", None)
+
+    def test_404_while_pact_is_off(self, web, monkeypatch):
+        monkeypatch.setattr(settings, "pact_private_jwk", "")
+        monkeypatch.setattr(settings, "pact_key_ssm_parameter", "")
+        assert web.get("/pact/client.json").status_code == 404
+
+    def test_client_id_is_the_exact_url_it_is_served_from(self, web, monkeypatch):
+        from src.chatbot.pact.routes import client_metadata_url
+
+        self.on(monkeypatch)
+        doc = web.get("/pact/client.json").json()
+        assert doc["client_id"] == client_metadata_url() == f"{ISSUER}/pact/client.json"
+
+    def test_client_id_ignores_the_request_host(self, web, monkeypatch):
+        self.on(monkeypatch)
+        doc = web.get("/pact/client.json", headers={"host": "evil.example", "x-forwarded-host": "evil.example"}).json()
+        assert doc["client_id"].startswith(ISSUER)
+
+    def test_it_meets_the_drafts_rules_for_the_identifier_url(self, web, monkeypatch):
+        from urllib.parse import urlsplit
+
+        self.on(monkeypatch)
+        url = urlsplit(web.get("/pact/client.json").json()["client_id"])
+        assert url.scheme == "https" and url.path not in ("", "/")
+        assert not url.fragment and not url.username and not url.password
+        assert "/./" not in url.path and "/../" not in url.path
+
+    def test_it_authenticates_with_a_key_not_a_secret(self, web, monkeypatch):
+        self.on(monkeypatch)
+        doc = web.get("/pact/client.json").json()
+        assert doc["token_endpoint_auth_method"] == "private_key_jwt"
+        assert doc["jwks_uri"] == f"{ISSUER}/.well-known/jwks.json"
+        for forbidden in ("client_secret", "client_secret_expires_at", "d", "private_key", "jwks"):
+            assert forbidden not in doc            # no secret, no private key, no inline keys
+
+    def test_the_published_keys_are_public_only_and_signed_jwts_verify_with_them(self, web, monkeypatch):
+        self.on(monkeypatch)
+        doc = web.get("/pact/client.json").json()
+        keys = web.get("/.well-known/jwks.json").json()["keys"]   # the route jwks_uri points at
+        assert doc["jwks_uri"].endswith("/.well-known/jwks.json") and keys and all("d" not in k for k in keys)
+        token = sign_pact_jwt("u_x", AUDIENCE, key=pact_keys.get_pact_key(), issuer=ISSUER)
+        assert jwt.decode(token, keys[0], algorithms=["ES256"], audience=AUDIENCE, issuer=ISSUER)
+
+    def test_it_asks_for_the_device_code_and_refresh_grants_and_nothing_else(self, web, monkeypatch):
+        self.on(monkeypatch)
+        assert web.get("/pact/client.json").json()["grant_types"] == [
+            "urn:ietf:params:oauth:grant-type:device_code", "refresh_token"]
+
+    def test_it_is_small_json_served_with_a_plain_200_and_no_redirect(self, web, monkeypatch):
+        self.on(monkeypatch)
+        r = web.get("/pact/client.json", follow_redirects=False)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("application/json")
+        assert len(r.content) < 5 * 1024          # the draft recommends authorization servers cap reads at 5 KB
+        assert r.headers["cache-control"] == "public, max-age=300"
